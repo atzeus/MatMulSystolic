@@ -1,6 +1,3 @@
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
-
 /**
  * Created by atze on 28-9-17.
  */
@@ -29,16 +26,14 @@ public class MatMul {
     }
 
 
-    static final int DOT_PROD_VECTOR_SIZE = 1;
-    static final int SYS_ARRAY_NUM_ROWS = 1;
-    static final int SYS_ARRAY_NUM_COLS = 1;
-    static final int MATRIX_A_BLOCK_WIDTH = 1;
-    static final int MATRIX_A_BLOCK_HEIGHT = 1;
-    static final int MATRIX_B_BLOCK_WIDTH = 1;
-    static final int ROWS_INTERLEAVED = 1;
-    static final int COLS_INTERLEAVED = 1;
-    static final int NR_INTERLEAVED = ROWS_INTERLEAVED * COLS_INTERLEAVED;
-    static final int MATRIX_A_BLOCK_NR_VECTORS = (MATRIX_A_BLOCK_WIDTH / DOT_PROD_VECTOR_SIZE) * MATRIX_A_BLOCK_HEIGHT;
+    static final int DOT_PROD_VECTOR_SIZE = 3;
+    static final int SYS_ARRAY_NUM_ROWS = 3;
+    static final int SYS_ARRAY_NUM_COLS = 3;
+    static final int INTERLEAVED  = 3; // Cols/Rows interleaved
+    static final int MATRIX_A_BLOCK_HEIGHT = INTERLEAVED * SYS_ARRAY_NUM_ROWS;
+    static final int MATRIX_B_BLOCK_WIDTH = INTERLEAVED * SYS_ARRAY_NUM_COLS;
+
+    static final int NR_INTERLEAVED = INTERLEAVED * INTERLEAVED;
     static final VecFloat ZERO_ARRAY = new VecFloat(0,0,0,0);
     static final WatchFIFO<ChannelAData>[][] ch_data_a;
     static final WatchFIFO<VecFloat>[][] ch_data_b;
@@ -52,6 +47,8 @@ public class MatMul {
     static final WatchFIFO<ChannelAData>[] row_feed_chain;
     static final WatchFIFO<ChannelAData>[] row_feed_to_buf;
 
+    static final int QUEUE_SIZE = 1;
+
     static final WatchFIFO<VecFloat>[] col_feed_chain;
     static final WatchFIFO<VecFloat>[] col_feed_to_buf;
 
@@ -61,7 +58,7 @@ public class MatMul {
         WatchFIFO<ChannelAData>[][] set = new WatchFIFO[SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS];
         for(int row = 0 ; row < SYS_ARRAY_NUM_ROWS ; row++ ){
             for(int col = 0 ; col < SYS_ARRAY_NUM_COLS; col++) {
-                set[row][col] = new WatchFIFO<ChannelAData>(1);
+                set[row][col] = new WatchFIFO<ChannelAData>(QUEUE_SIZE);
             }
         }
         ch_data_a = set;
@@ -70,7 +67,7 @@ public class MatMul {
         WatchFIFO<VecFloat>[][] setb = new WatchFIFO[SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS];
         for(int row = 0 ; row < SYS_ARRAY_NUM_ROWS ; row++ ){
             for(int col = 0 ; col < SYS_ARRAY_NUM_COLS; col++) {
-                setb[row][col] = new WatchFIFO<VecFloat>(1);
+                setb[row][col] = new WatchFIFO<VecFloat>(QUEUE_SIZE);
             }
         }
         ch_data_b = setb;
@@ -78,7 +75,7 @@ public class MatMul {
         WatchFIFO<Float>[][] setc = new WatchFIFO[SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS];
         for(int row = 0 ; row < SYS_ARRAY_NUM_ROWS ; row++ ){
             for(int col = 0 ; col < SYS_ARRAY_NUM_COLS; col++) {
-                setc[row][col] = new WatchFIFO<Float>(1);
+                setc[row][col] = new WatchFIFO<Float>(NR_INTERLEAVED);
             }
         }
         ch_data_c = setc;
@@ -86,40 +83,40 @@ public class MatMul {
         setc = new WatchFIFO[SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS];
         for(int row = 0 ; row < SYS_ARRAY_NUM_ROWS ; row++ ){
             for(int col = 0 ; col < SYS_ARRAY_NUM_COLS; col++) {
-                setc[row][col] = new WatchFIFO<Float>(NR_INTERLEAVED);
+                setc[row][col] = new WatchFIFO<Float>(QUEUE_SIZE);
             }
         }
         ch_drain_c = setc;
 
         WatchFIFO<ChannelAData>[] setf = new WatchFIFO[SYS_ARRAY_NUM_ROWS];
         for(int row = 0 ; row < SYS_ARRAY_NUM_ROWS ; row++ ){
-            setf[row]= new WatchFIFO<ChannelAData>(1);
+            setf[row]= new WatchFIFO<ChannelAData>(QUEUE_SIZE);
         }
         row_feed_chain = setf;
 
         setf = new WatchFIFO[SYS_ARRAY_NUM_ROWS];
         for(int row = 0 ; row < SYS_ARRAY_NUM_ROWS ; row++ ){
-            setf[row]= new WatchFIFO<ChannelAData>(1);
+            setf[row]= new WatchFIFO<ChannelAData>(QUEUE_SIZE);
         }
         row_feed_to_buf = setf;
 
         WatchFIFO<VecFloat>[] seth = new WatchFIFO[SYS_ARRAY_NUM_COLS];
         for(int row = 0 ; row < SYS_ARRAY_NUM_COLS ; row++ ){
-            seth[row]= new WatchFIFO<VecFloat>(1);
+            seth[row]= new WatchFIFO<VecFloat>(QUEUE_SIZE);
         }
         col_feed_chain = seth;
 
         seth = new WatchFIFO[SYS_ARRAY_NUM_COLS];
         for(int row = 0 ; row < SYS_ARRAY_NUM_COLS ; row++ ){
-            seth[row]= new WatchFIFO<VecFloat>(1);
+            seth[row]= new WatchFIFO<VecFloat>(QUEUE_SIZE);
         }
         col_feed_to_buf = seth;
 
         WatchFIFO<VecFloat>[] setx = new WatchFIFO[SYS_ARRAY_NUM_COLS];
         for(int row = 0 ; row < SYS_ARRAY_NUM_ROWS ; row++ ){
-            setx[row]= new WatchFIFO<VecFloat>(1);
+            setx[row]= new WatchFIFO<VecFloat>(QUEUE_SIZE);
         }
-        ch_data_c_chain = seth;
+        ch_data_c_chain = setx;
 
         steps = new int[SYS_ARRAY_NUM_ROWS][];
         for(int row = 0 ; row < SYS_ARRAY_NUM_ROWS ; row++ ){
@@ -172,7 +169,7 @@ public class MatMul {
                     for (int reuse = 0; reuse < mat_b_num_blocks_in_row; reuse++) {
                             for(int x = 0 ; x < mat_a_num_vectors_in_row ; x++){
                                 for(int y = 0 ; y < MATRIX_A_BLOCK_HEIGHT; y++){
-                                    int index = yblock * mat_a_num_vectors_in_row_of_blocks + y * mat_a_num_vectors_in_row + x ;
+                                    int index = (yblock * MATRIX_A_BLOCK_HEIGHT + y) * mat_a_num_vectors_in_row + x ;
                                     ChannelAData write = new ChannelAData(A[index], !first && x == 0);
                                     write_channel_intel(row_feed_chain[0], write, "row_feed_chain[0]");
                                 }
@@ -182,11 +179,16 @@ public class MatMul {
                     }
                 }
                 // flush last block
-                for(int row = 0 ; row < MATRIX_A_BLOCK_HEIGHT ; row++) {
+                for(int row = 0 ; row <  MATRIX_A_BLOCK_HEIGHT ; row++) {
                     ChannelAData write = new ChannelAData(ZERO_ARRAY, true);
                     write_channel_intel(row_feed_chain[0],write, "row_feed_chain[0]" );
                 }
-                //System.err.println("DONE!!! LOAD MAT A!");
+                // Buffer will not flush without new elements
+                for(int row = 0 ; row < MATRIX_A_BLOCK_HEIGHT ; row++) {
+                    ChannelAData write = new ChannelAData(ZERO_ARRAY, false);
+                    write_channel_intel(row_feed_chain[0],write, "row_feed_chain[0]" );
+                }
+                System.err.println("DONE!!! LOAD MAT A!");
 
             } catch(InterruptedException e) {
                 System.err.println("Interrupted!! " + e.getMessage());
@@ -218,7 +220,7 @@ public class MatMul {
                     for (int xblock = 0; xblock < mat_b_num_blocks_in_row; xblock++) {
                         for (int y = 0; y < mat_a_num_vectors_in_row; y++) {
                             for (int x = 0; x < MATRIX_B_BLOCK_WIDTH; x++) {
-                                int index = xblock * mat_b_num_vectors_in_col_of_blocks + x * mat_b_num_vectors_in_col + y;
+                                int index = (xblock * MATRIX_B_BLOCK_WIDTH + x) * mat_b_num_vectors_in_col + y;
                                 //System.err.printf("Loading B  %d %f \n", index, B[index].vals[0]);
                                 write_channel_intel(col_feed_chain[0], B[index], "col_feed_chain[0]");
                             }
@@ -227,9 +229,10 @@ public class MatMul {
                     }
                 }
                 // flush last block
-                for(int row = 0 ; row < MATRIX_B_BLOCK_WIDTH ; row++) {
+                for(int row = 0 ; row < MATRIX_B_BLOCK_WIDTH *2   ; row++) {
                     write_channel_intel(col_feed_chain[0],ZERO_ARRAY, "col_feed_chain[0]" );
                 }
+                System.err.println("DONE!!! LOAD MAT B!");
             } catch(InterruptedException e) {
                 System.err.println("Interrupted!! " + e.getMessage());
                 System.exit(0);
@@ -285,7 +288,7 @@ public class MatMul {
                     if(count == 0) {
                         write_channel_intel(col_feed_to_buf[col], read, "col_feed_to_buf[" + col + "]");
                         count = freq;
-                        System.err.printf("Wrote to bufc B %f \n", read.vals[0]);
+                        //System.err.printf("Wrote to bufc B %f \n", read.vals[0]);
                     } else {
                         write_channel_intel(col_feed_chain[col+1], read, "col_feed_chain[" + (col + 1) + "]");
                         count--;
@@ -308,8 +311,8 @@ public class MatMul {
             this.row = row;
             buf = new ChannelAData[2][];
             for(int b = 0 ; b < 2 ; b++){
-                buf[b] = new ChannelAData[ROWS_INTERLEAVED];
-                for(int r = 0 ; r < ROWS_INTERLEAVED ; r++) {
+                buf[b] = new ChannelAData[INTERLEAVED];
+                for(int r = 0 ; r < INTERLEAVED ; r++) {
                     buf[b][r] = new ChannelAData(ZERO_ARRAY, false);
                 }
             }
@@ -326,7 +329,7 @@ public class MatMul {
                 while (true) {
                     write_channel_intel(ch_data_a[row][0],buf[buf_to_read][row_to_read_write], "ch_data_a[" + row + "][0]" );
                     //System.err.printf("Wrote new to buf A %f \n",buf[buf_to_read][row_to_read_write].data.vals[0]);
-                    if(reuse_cnt == COLS_INTERLEAVED - 1) {
+                    if(reuse_cnt == INTERLEAVED - 1) {
                         reuse_cnt = 0;
                         // load once every COLS_INTERLEAVED steps
                         ChannelAData read = read_channel_intel(row_feed_to_buf[row], "row_feed_to_buf[" + row + "]");
@@ -334,7 +337,7 @@ public class MatMul {
                         int buf_to_write = 1 - buf_to_read;
                         buf[buf_to_write][row_to_read_write] = read;
 
-                        if(row_to_read_write == ROWS_INTERLEAVED - 1){
+                        if(row_to_read_write == INTERLEAVED - 1){
                             buf_to_read = 1 - buf_to_read;
                             row_to_read_write = 0;
                         } else {
@@ -360,8 +363,8 @@ public class MatMul {
             this.col = col;
             buf = new VecFloat[2][];
             for(int b = 0 ; b < 2 ; b++){
-                buf[b] = new VecFloat[COLS_INTERLEAVED];
-                for(int r = 0 ; r < COLS_INTERLEAVED ; r++) {
+                buf[b] = new VecFloat[INTERLEAVED];
+                for(int r = 0 ; r < INTERLEAVED ; r++) {
                     buf[b][r] = ZERO_ARRAY;
                 }
             }
@@ -369,25 +372,25 @@ public class MatMul {
 
         public void run(){
             try{
-                // We obtain a new value every COLS_INTERLEAVED steps
+                // We obtain a new value every ROWS_INTERLEAVED steps
                 // Each value is also reused ROWS_INTERLEAVED steps
-                // meaning new values come in at exactly the right rate (assuming COLS_INTERLEAVED = ROWS_INTERLEAVED)
+                // meaning new values come in at exactly the right rate (assuming ROWS_INTERLEAVED = COLS_INTERLEAVED)
                 int reuse_cnt_col_to_write = 0;
                 int buf_to_read = 0;
                 int col_to_read = 0;
                 while (true) {
                     write_channel_intel(ch_data_b[0][col],buf[buf_to_read][col_to_read],"ch_data_b[0][" + col + "]");
                     //System.err.printf("Wrote new to buf B %d %d %f \n", buf_to_read, col_to_read, buf[buf_to_read][col_to_read].vals[0]);
-                    if(col_to_read == COLS_INTERLEAVED - 1){
+                    if(col_to_read == INTERLEAVED - 1){
                         col_to_read = 0;
                         // load once every COLS_INTERLEAVED steps
                         VecFloat read = read_channel_intel(col_feed_to_buf[col], "col_feed_to_buf[" + col + "]" );
                         int buf_to_write = 1 - buf_to_read;
-                        System.err.printf("Got new to buf B %d %d %f\n", buf_to_write , reuse_cnt_col_to_write, read.vals[0]);
+                        //System.err.printf("Got new to buf B %d %d %f\n", buf_to_write , reuse_cnt_col_to_write, read.vals[0]);
 
                         buf[buf_to_write][reuse_cnt_col_to_write] = read;
 
-                        if(reuse_cnt_col_to_write == ROWS_INTERLEAVED - 1){
+                        if(reuse_cnt_col_to_write == INTERLEAVED - 1){
                             buf_to_read =  1- buf_to_read;
                             reuse_cnt_col_to_write = 0;
                         } else {
@@ -440,7 +443,7 @@ public class MatMul {
                     }
 
                     if(new_col_row_pair) {
-                        //System.err.printf("Dumped! %d %d\n", row,col);
+                        System.err.printf("Dumped! %d %d\n", row,col);
                         write_channel_intel(ch_data_c[row][col],interleave_shift[NR_INTERLEAVED-1], "ch_data_c[" + row + "][" + col   + "]");
                     }
 
@@ -476,23 +479,32 @@ public class MatMul {
         }
 
         public void run() {
-            int total_forward = (row+1) * NR_INTERLEAVED ;
             int i = 0;
+            int interleaved = 0;
             try {
                 while (true) {
                     float read;
-                    if (i < NR_INTERLEAVED) {
+                    if (i == 0){
                         read = read_channel_intel(ch_data_c[row][col], "ch_data_c[" + row + "][" + col + "]");
                     } else {
                         read = read_channel_intel(ch_drain_c[row-1][col], "ch_drain_c[" + (row -1 ) + "][" + col + "]");
                     }
-                    //System.err.printf("Drain c %d %d\n", row,col);
+                    //if(interleaved == 1 && i == row) {
+                     //   System.err.printf("Drain c %d %d %d %d \n", i, interleaved, row, col);
+                    //}
+
                     write_channel_intel(ch_drain_c[row][col], read, "ch_drain_c[" + row  + "][" + col + "]");
-                    if(i == total_forward - 1){
-                        i = 0;
+                    if(interleaved == INTERLEAVED - 1){
+                        interleaved = 0;
+                        if(i == row ){
+                            i = 0;
+                        } else {
+                            i = i + 1;
+                        }
                     } else {
-                        i = i + 1;
-                    }
+                        interleaved++;
+                   }
+
                 }
             } catch (InterruptedException e){
                 System.err.println("Interrupted!! " + e.getMessage());
@@ -522,11 +534,11 @@ public class MatMul {
 
                     float[] out = new float[SYS_ARRAY_NUM_COLS];
 
-                    for (int i = SYS_ARRAY_NUM_COLS-1 ; i > col; --i) {
-                        out[i] = prev_node_data_in[i];
+                    for (int i = 0; i < SYS_ARRAY_NUM_COLS - 1; i++) {
+                        out[i] = prev_node_data_in[i+1];
                     }
 
-                    out[col] = in;
+                    out[SYS_ARRAY_NUM_COLS-1] = in;
                     write_channel_intel(ch_data_c_chain[col], new VecFloat(out), "ch_data_c_chain[" + col  +"]");
 
                 }
@@ -551,7 +563,7 @@ public class MatMul {
             try {
                 for (int i = 0; i < num_vecs_to_write; i++) {
                     VecFloat dataIn = read_channel_intel(ch_data_c_chain[0], "ch_data_c_chain[0]");
-                    //System.err.printf("Write data  %d  %f \n",i, dataIn.vals[0]);
+                    System.err.printf("Write data  %d of %d : %f \n",i, num_vecs_to_write, dataIn.vals[0]);
                     toMem[i] = dataIn;
                 }
             }  catch (InterruptedException e) {
@@ -598,7 +610,7 @@ public class MatMul {
         VecFloat[] b_blocked_vec = vectorize(b_blocked, DOT_PROD_VECTOR_SIZE);
         VecFloat[] res = new VecFloat[(heighta * widthb) / SYS_ARRAY_NUM_COLS ];
         run_Mat_mul(a_blocked_vec, widtha , heighta, widthb, b_blocked_vec, res);
-        float[] resv = devectorize(res, DOT_PROD_VECTOR_SIZE);
+        float[] resv = devectorize(res, SYS_ARRAY_NUM_COLS);
         float[][] resw =  deflatten(resv, widthb, heighta);
         return resw;
 
@@ -623,14 +635,23 @@ public class MatMul {
     public static void checkem(float[][] a, float[][] b, int widtha, int heighta, int widthb, float err){
         float[][] resNorm= matrixMul(a,b,widtha,heighta,widthb);
         float[][] resSystolic = matrixMulSystolic(a,b,widtha,heighta,widthb);
+        int nza = 0;
+        int nzb = 0;
         for(int row = 0; row < heighta ; row++){
             for(int col = 0; col < widthb ; col++){
                 float dist = Math.abs(resNorm[row][col] - resSystolic[row][col]);
+                if(resNorm[row][col] > err){
+                    nza++;
+                }
+                if(resSystolic[row][col] > err){
+                    nzb++;
+                }
                 //if(dist > err){
-                    System.out.println("Error of " + dist +  "at row " + row + ", col " + col +  " orig: " + resNorm[row][col] + " systolic" + resSystolic[row][col]);
+                    System.out.println((dist > err ? "ERR" : "ok ") + " of " + dist +  "at row " + row + ", col " + col +  " orig: " + resNorm[row][col] + " systolic" + resSystolic[row][col]);
                 //}
             }
         }
+        System.out.println("Nonzeros : " + nza + " , " + nzb);
     }
 
     public static float[][] ident(int size) {
@@ -744,7 +765,7 @@ public class MatMul {
             } else {
                 stat= '?';
             }
-            return stat + "" + q.passed;
+            return stat + "";
         }
 
         <E> String row(WatchFIFO<E>[] qs){
@@ -797,12 +818,12 @@ public class MatMul {
 
         void visualize(){
             System.err.println("A ");
-            //System.err.print(mergeHor(transpose(row(row_feed_chain), row(row_feed_chain)), grid(ch_data_a)));
-            System.err.println(row(row_feed_chain));
+            System.err.print(mergeHor(transpose(row(row_feed_chain), row(row_feed_chain)), grid(ch_data_a)));
+            /*System.err.println(row(row_feed_chain));
             System.err.println(row(row_feed_chain));
             System.err.println();
             System.err.println(grid(ch_data_a));
-
+            */
             System.err.println();
             System.err.println("B");
             System.err.println(row(col_feed_chain));
@@ -827,7 +848,7 @@ public class MatMul {
         try {
             while (true) {
                 sleep(5000);
-                //visualize();
+                visualize();
             }
         } catch(InterruptedException e){
 
@@ -836,7 +857,7 @@ public class MatMul {
     }
 
     public static void main(String[] argv){
-        int width = MATRIX_A_BLOCK_WIDTH * 2 ;
+        int width = MATRIX_A_BLOCK_HEIGHT * 1 ;
         new WatchEm().start();;
         float[][] ident = ident(width);
         checkem(ident,ident,width,width,width, 0.001f);
