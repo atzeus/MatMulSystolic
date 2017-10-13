@@ -26,10 +26,10 @@ public class MatMul {
     }
 
 
-    static final int DOT_PROD_VECTOR_SIZE = 3;
-    static final int SYS_ARRAY_NUM_ROWS = 3;
-    static final int SYS_ARRAY_NUM_COLS = 3;
-    static final int INTERLEAVED  = 3; // Cols/Rows interleaved
+    static final int DOT_PROD_VECTOR_SIZE = 1;
+    static final int SYS_ARRAY_NUM_ROWS = 2;
+    static final int SYS_ARRAY_NUM_COLS = 2;
+    static final int INTERLEAVED  = 2; // Cols/Rows interleaved
     static final int MATRIX_A_BLOCK_HEIGHT = INTERLEAVED * SYS_ARRAY_NUM_ROWS;
     static final int MATRIX_B_BLOCK_WIDTH = INTERLEAVED * SYS_ARRAY_NUM_COLS;
 
@@ -666,6 +666,26 @@ public class MatMul {
     }
 
 
+    public static float[][] testMat(int size) {
+        float[][] res = new float[size][];
+        int z = 0;
+        for(int row = 0 ; row < size ; row++ ){
+            res[row] = new float[size];
+            for(int col = 0 ; col < size ; col++){
+                /*if(col == row) {
+                    res[row][col] = (float)Math.sqrt(row + 1);
+                } else {
+                    res[row][col] = 0;
+                }
+                */
+                res[row][col] = z;
+                z++;
+            }
+        }
+        return res;
+    }
+
+
     public static float[][] transpose(float[][] in, int width, int height){
         float[][] res = new float[width][];
         for(int row = 0 ; row < width; row++) {
@@ -859,7 +879,7 @@ public class MatMul {
     public static void main(String[] argv){
         int width = MATRIX_A_BLOCK_HEIGHT * 1 ;
         new WatchEm().start();;
-        float[][] ident = ident(width);
+        float[][] ident = testMat(width);
         checkem(ident,ident,width,width,width, 0.001f);
         System.out.println("DONE");
         try {
