@@ -29,9 +29,9 @@ public class MatMul {
 
 
     static final int DOT_PROD_VECTOR_SIZE = 1;
-    static final int SYS_ARRAY_NUM_ROWS = 5;
-    static final int SYS_ARRAY_NUM_COLS = 5;
-    static final int INTERLEAVED  = 1; // Cols/Rows interleaved
+    static final int SYS_ARRAY_NUM_ROWS = 16;
+    static final int SYS_ARRAY_NUM_COLS = 16;
+    static final int INTERLEAVED  = 4; // Cols/Rows interleaved
     static final int MATRIX_A_BLOCK_HEIGHT = INTERLEAVED * SYS_ARRAY_NUM_ROWS;
     static final int MATRIX_B_BLOCK_WIDTH = INTERLEAVED * SYS_ARRAY_NUM_COLS;
 
@@ -147,8 +147,8 @@ public class MatMul {
         }
         col_feed_to_buf = seth;
 
-        WatchFIFO<VecFloat>[] setx = new WatchFIFO[SYS_ARRAY_NUM_COLS];
-        for(int row = 0 ; row < SYS_ARRAY_NUM_COLS ; row++ ){
+        WatchFIFO<VecFloat>[] setx = new WatchFIFO[SYS_ARRAY_NUM_COLS-1];
+        for(int row = 0 ; row < SYS_ARRAY_NUM_COLS -1 ; row++ ){
             setx[row]= new WatchFIFO<VecFloat>(QUEUE_SIZE);
         }
         col_c_chain = setx;
@@ -210,7 +210,89 @@ public class MatMul {
             this.mat_b_num_blocks_in_row = mat_b_num_blocks_in_row;
         }
 
-        public void run() {
+        public void run(){
+            try {
+                boolean first = true;
+                boolean cont = true;
+                boolean flush = false;
+                int y = 0;
+                int x = 0;
+                int reuse = 0;
+                int yblock = 0;
+                int ybase = 0;
+                int index = 0;
+                while(cont){
+                    //int index = (yblock * MATRIX_A_BLOCK_HEIGHT + y) * mat_a_num_vectors_in_row + x ;
+                    VecFloat load = flush ? VECTOR_ZERO : A[index];
+                    System.err.printf("Load %d %d %d %d\n", y, x, reuse, yblock);
+                    ChannelAData write = new ChannelAData(load, !first && x == 0);
+                    write_channel_intel(row_feed_chain_border, write);
+                    if(y == MATRIX_A_BLOCK_HEIGHT - 1){
+                        y = 0;
+                        first = false;
+                        if(flush && x == 2){
+                            cont = false;
+                        } else if(x == mat_a_num_vectors_in_row -1){
+                            x = 0;
+                            if(reuse == mat_b_num_blocks_in_row){
+                                reuse = 0;
+                                if(yblock == mat_a_num_blocks_in_col - 1){
+                                    flush = true;
+                                } else {
+                                    ybase = index + 1;
+                                    yblock++;
+                                }
+                            } else {
+                                reuse++;
+                            }
+                        } else {
+                           x++;
+                        }
+                        index = ybase + x;
+                    } else {
+                        y++;
+                        index += mat_a_num_vectors_in_row;
+                    }
+                }
+
+
+
+            } catch(InterruptedException e) {
+                e.printStackTrace();
+                System.err.println("Interrupted!! LoadMatA" + e.getMessage());
+                System.exit(0);
+            }
+
+        }
+
+        public void runSingle(){
+            try {
+                boolean first = true;
+                for (int yblock = 0; yblock < mat_a_num_blocks_in_col + 1; yblock++) {
+                    for (int reuse = 0; reuse < (yblock < mat_a_num_blocks_in_col ? mat_b_num_blocks_in_row : 1); reuse++) {
+                        for(int x = 0 ; x < (yblock < mat_a_num_blocks_in_col ? mat_a_num_vectors_in_row : 2) ; x++){
+                            for(int y = 0 ; y < MATRIX_A_BLOCK_HEIGHT; y++){
+                                int index = (yblock * MATRIX_A_BLOCK_HEIGHT + y) * mat_a_num_vectors_in_row + x ;
+                                VecFloat load = (yblock < mat_a_num_blocks_in_col ? A[index] : VECTOR_ZERO);
+                                ChannelAData write = new ChannelAData(load, !first && x == 0);
+                                write_channel_intel(row_feed_chain_border, write);
+                            }
+                            first = false;
+                        }
+                        //System.err.printf(" Wrote matrix A BLOCK %d \n", yblock  );
+                    }
+                }
+
+
+            } catch(InterruptedException e) {
+                e.printStackTrace();
+                System.err.println("Interrupted!! LoadMatA" + e.getMessage());
+                System.exit(0);
+            }
+
+        }
+
+        public void runSimple() {
             try {
                 boolean first = true;
                 for (int yblock = 0; yblock < mat_a_num_blocks_in_col; yblock++) {
@@ -261,11 +343,92 @@ public class MatMul {
             this.mat_b_num_blocks_in_row = mat_b_num_blocks_in_row;
         }
 
-        public void run() {
+        public void run(){
+            final int mat_b_num_vectors_in_col = mat_a_num_vectors_in_row;
+            try {
+                int reuse = 0;
+                boolean flush = false;
+                boolean cont = true;
+                int xblock = 0;
+                int y = 0;
+                int x = 0;
+                int index = 0;
+                int xbase = 0;
+                while(cont){
+
+                    //int index = (xblock * MATRIX_B_BLOCK_WIDTH + x) * mat_b_num_vectors_in_col + y;
+                    VecFloat load = flush ? VECTOR_ZERO : B[index] ;
+                    write_channel_intel(col_feed_chain_border, load);
+
+                    if(x == MATRIX_B_BLOCK_WIDTH - 1){
+                        x = 0;
+                        if(flush && y == 2){
+                            cont = false;
+                        } else if(y == mat_a_num_vectors_in_row-1){
+                            y = 0;
+                            if(xblock == mat_b_num_blocks_in_row - 1){
+                                xblock = 0;
+                                if(reuse == mat_a_num_blocks_in_col - 1){
+                                    flush=true;
+                                } else {
+                                    index = 0;
+                                    xbase = 0;
+                                    reuse++;
+                                }
+                            } else {
+                                xblock++;
+                            }
+                        } else {
+                            y++;
+                        }
+                        index = xbase + y;
+                    } else {
+                        x++;
+                        index+=mat_b_num_vectors_in_col;
+                    }
+                }
+            } catch(InterruptedException e) {
+                e.printStackTrace();
+                System.err.println("Interrupted!! LoadMatB" + e.getMessage());
+                System.exit(0);
+            }
+        }
+
+        public void runSingle() {
             final int mat_b_num_vectors_in_col = mat_a_num_vectors_in_row;
             try {
                 for (int reuse = 0; reuse < mat_a_num_blocks_in_col; reuse++) {
                     for (int xblock = 0; xblock < mat_b_num_blocks_in_row; xblock++) {
+                        int nrY = mat_a_num_vectors_in_row;
+                        if(reuse == mat_a_num_blocks_in_col - 1 && xblock == mat_b_num_blocks_in_row - 1){
+                            nrY +=2;
+                        }
+                        for (int y = 0; y < nrY; y++) {
+                            for (int x = 0; x < MATRIX_B_BLOCK_WIDTH; x++) {
+                                int index = (xblock * MATRIX_B_BLOCK_WIDTH + x) * mat_b_num_vectors_in_col + y;
+                                VecFloat load = y < mat_a_num_vectors_in_row ? B[index] : VECTOR_ZERO;
+                                write_channel_intel(col_feed_chain_border, load);
+                            }
+                        }
+                    }
+                }
+
+            } catch(InterruptedException e) {
+                e.printStackTrace();
+                System.err.println("Interrupted!! LoadMatB" + e.getMessage());
+                System.exit(0);
+            }
+        }
+
+        public void runSimple() {
+            final int mat_b_num_vectors_in_col = mat_a_num_vectors_in_row;
+            try {
+                for (int reuse = 0; reuse < mat_a_num_blocks_in_col; reuse++) {
+                    for (int xblock = 0; xblock < mat_b_num_blocks_in_row; xblock++) {
+                        int nrY = mat_a_num_vectors_in_row;
+                        if(reuse == mat_a_num_blocks_in_col - 1 && xblock == mat_b_num_blocks_in_row){
+                            nrY +=2;
+                        }
                         for (int y = 0; y < mat_a_num_vectors_in_row; y++) {
                             for (int x = 0; x < MATRIX_B_BLOCK_WIDTH; x++) {
                                 int index = (xblock * MATRIX_B_BLOCK_WIDTH + x) * mat_b_num_vectors_in_col + y;
@@ -363,17 +526,20 @@ public class MatMul {
     static class Buf_mat_a_kernel extends Thread{
 
         final int row;
-        final ChannelAData[][] buf;
+        final VecFloat[][] buf;
+        final boolean[] new_row_col;
 
         Buf_mat_a_kernel(int row){
             this.row = row;
-            buf = new ChannelAData[2][];
+            buf = new VecFloat[2][];
             for(int b = 0 ; b < 2 ; b++){
-                buf[b] = new ChannelAData[INTERLEAVED];
+                buf[b] = new VecFloat[INTERLEAVED];
                 for(int r = 0 ; r < INTERLEAVED ; r++) {
-                    buf[b][r] = new ChannelAData(VECTOR_ZERO, false);
+                    buf[b][r] = VECTOR_ZERO;
                 }
             }
+            new_row_col = new boolean[2];
+            new_row_col[0] = new_row_col[1] = false;
         }
 
         public void run(){
@@ -385,14 +551,17 @@ public class MatMul {
                 int buf_to_read = 0;
                 int row_to_read_write = 0;
                 while (true) {
-                    write_channel_intel(ch_data_a_border[row],buf[buf_to_read][row_to_read_write] );
+                    ChannelAData write = new ChannelAData(buf[buf_to_read][row_to_read_write],new_row_col[buf_to_read]);
+                    write_channel_intel(ch_data_a_border[row],write );
                     if(reuse_cnt == INTERLEAVED - 1) {
                         reuse_cnt = 0;
                         // load once every COLS_INTERLEAVED steps
                         ChannelAData read = read_channel_intel(row_feed_to_buf[row]);
                         int buf_to_write = 1 - buf_to_read;
-                        buf[buf_to_write][row_to_read_write] = read;
-
+                        buf[buf_to_write][row_to_read_write] = read.data;
+                        if(row_to_read_write == 0) {
+                            new_row_col[buf_to_write] = read.new_row_col_pair;
+                        }
                         if(row_to_read_write == INTERLEAVED - 1){
                             buf_to_read = 1 - buf_to_read;
                             row_to_read_write = 0;
@@ -592,7 +761,7 @@ public class MatMul {
                     float in = read_channel_intel(ch_drain_c_border[col]);
                     float[] prev_node_data_in = new float[SYS_ARRAY_NUM_COLS];
                     if(col != SYS_ARRAY_NUM_COLS - 1) {
-                        prev_node_data_in = read_channel_intel(col_c_chain[col +1]).vals;
+                        prev_node_data_in = read_channel_intel(col_c_chain[col]).vals;
                     }
 
                     float[] out = new float[SYS_ARRAY_NUM_COLS];
@@ -605,7 +774,7 @@ public class MatMul {
                     if(col == 0){
                         write_channel_intel(col_c_chain_border, new VecFloat(out));
                     } else {
-                        write_channel_intel(col_c_chain[col], new VecFloat(out));
+                        write_channel_intel(col_c_chain[col-1], new VecFloat(out));
                     }
 
                 }
@@ -960,7 +1129,7 @@ public class MatMul {
     public static void main(String[] argv){
         int width = Math.max(MATRIX_A_BLOCK_HEIGHT,MATRIX_B_BLOCK_WIDTH) * 1 ;
         //new WatchEm().start();;
-        float[][] ident = ident(width);
+        float[][] ident = testMat(width);
         checkem(ident,ident,width,width,width, 0.001f);
         System.out.println("DONE");
 //        try {
