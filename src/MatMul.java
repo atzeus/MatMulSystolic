@@ -29,8 +29,8 @@ public class MatMul {
 
 
     static final int DOT_PROD_VECTOR_SIZE = 1;
-    static final int SYS_ARRAY_NUM_ROWS = 16;
-    static final int SYS_ARRAY_NUM_COLS = 16;
+    static final int SYS_ARRAY_NUM_ROWS = 4;
+    static final int SYS_ARRAY_NUM_COLS = 4;
     static final int INTERLEAVED  = 4; // Cols/Rows interleaved
     static final int MATRIX_A_BLOCK_HEIGHT = INTERLEAVED * SYS_ARRAY_NUM_ROWS;
     static final int MATRIX_B_BLOCK_WIDTH = INTERLEAVED * SYS_ARRAY_NUM_COLS;
@@ -224,7 +224,7 @@ public class MatMul {
                 while(cont){
                     //int index = (yblock * MATRIX_A_BLOCK_HEIGHT + y) * mat_a_num_vectors_in_row + x ;
                     VecFloat load = flush ? VECTOR_ZERO : A[index];
-                    System.err.printf("Load %d %d %d %d\n", y, x, reuse, yblock);
+                    //System.err.printf("Load %d %d %d %d\n", y, x, reuse, yblock);
                     ChannelAData write = new ChannelAData(load, !first && x == 0);
                     write_channel_intel(row_feed_chain_border, write);
                     if(y == MATRIX_A_BLOCK_HEIGHT - 1){
@@ -526,12 +526,22 @@ public class MatMul {
     static class Buf_mat_a_kernel extends Thread{
 
         final int row;
+        final VecFloat[] bufShift;
+        final VecFloat[] backShift;
         final VecFloat[][] buf;
         final boolean[] new_row_col;
 
         Buf_mat_a_kernel(int row){
             this.row = row;
             buf = new VecFloat[2][];
+            bufShift = new VecFloat[INTERLEAVED];
+            for(int r = 0 ; r < INTERLEAVED ; r++) {
+                bufShift[r] = VECTOR_ZERO;
+            }
+            backShift = new VecFloat[INTERLEAVED];
+            for(int r = 0 ; r < INTERLEAVED ; r++) {
+                backShift[r] = VECTOR_ZERO;
+            }
             for(int b = 0 ; b < 2 ; b++){
                 buf[b] = new VecFloat[INTERLEAVED];
                 for(int r = 0 ; r < INTERLEAVED ; r++) {
@@ -580,10 +590,13 @@ public class MatMul {
         }
     }
 
+
     static class Buf_mat_b_kernel extends Thread{
 
         final int col;
         final VecFloat[][] buf;
+        final VecFloat[] bufShift;
+        final VecFloat[] backShift;
 
         Buf_mat_b_kernel(int col){
             this.col = col;
@@ -594,9 +607,70 @@ public class MatMul {
                     buf[b][r] = VECTOR_ZERO;
                 }
             }
+            bufShift = new VecFloat[INTERLEAVED];
+            for(int r = 0 ; r < INTERLEAVED ; r++) {
+                bufShift[r] = VECTOR_ZERO;
+            }
+            backShift = new VecFloat[INTERLEAVED-1];
+            for(int r = 0 ; r < INTERLEAVED -1 ; r++) {
+                backShift[r] = VECTOR_ZERO;
+            }
         }
 
+
         public void run(){
+            try{
+                // We obtain a new value every ROWS_INTERLEAVED steps
+                // Each value is also reused ROWS_INTERLEAVED steps
+                // meaning new values come in at exactly the right rate (assuming ROWS_INTERLEAVED = COLS_INTERLEAVED)
+                int reuse_cnt_col_to_write = 0;
+                int col_to_read = 0;
+                while (true) {
+                    VecFloat first = bufShift[0];
+                    VecFloat firstBack = backShift[0];
+                    write_channel_intel(ch_data_b_border[col],first);
+                    boolean flip = reuse_cnt_col_to_write == INTERLEAVED -1;
+                    boolean read = col_to_read == INTERLEAVED - 1;
+                    String s = flip ? "flip" : "noflip";
+                    String s2 = read ? "read" : "noread";
+                    VecFloat newRead ;
+                    if(read){
+                        newRead = read_channel_intel(col_feed_to_buf[col]);
+                    } else {
+                        newRead = VECTOR_ZERO;
+                    }
+                    //System.err.printf("Buf %d %d %f %f %s %s\n", col_to_read, reuse_cnt_col_to_write, first.vals[0], newRead.vals[0], s ,s2);
+                    for(int i = 0; i < INTERLEAVED - 1 ; i++){
+                        bufShift[i] = bufShift[i + 1];
+                    }
+                    bufShift[INTERLEAVED -1] = flip ? (read? newRead : firstBack) : first;
+
+                    for(int i = 0; i < INTERLEAVED - 2 ; i++){
+                        backShift[i] = backShift[i + 1];
+                    }
+                    backShift[INTERLEAVED - 2] = flip ? VECTOR_ZERO : (read ? newRead : firstBack);
+
+                    if(read){
+                        col_to_read = 0;
+
+                        if(flip){
+                            reuse_cnt_col_to_write = 0;
+                        } else {
+                            reuse_cnt_col_to_write++;
+                        }
+                    } else {
+                        col_to_read++;
+                    }
+
+                }
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+                System.err.println("Interrupted!! Buf_mat_b_kernel" + e.getMessage());
+                System.exit(0);
+            }
+        }
+
+        public void runSimple(){
             try{
                 // We obtain a new value every ROWS_INTERLEAVED steps
                 // Each value is also reused ROWS_INTERLEAVED steps
@@ -605,7 +679,9 @@ public class MatMul {
                 int buf_to_read = 0;
                 int col_to_read = 0;
                 while (true) {
+
                     write_channel_intel(ch_data_b_border[col],buf[buf_to_read][col_to_read]);
+
                     if(col_to_read == INTERLEAVED - 1){
                         col_to_read = 0;
                         // load once every COLS_INTERLEAVED steps
