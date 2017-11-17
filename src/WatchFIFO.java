@@ -1,5 +1,6 @@
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Created by atze on 2-10-17.
@@ -30,7 +31,10 @@ public class WatchFIFO<E> {
             throw new Error("Not the same thread writing!");
         }
         offering = true;
-        q.put(val);
+        if(!q.offer(val,2, TimeUnit.SECONDS)){
+            throw new Error("Cannot offer!");
+        }
+
         offering = false;
         passed++;
     }

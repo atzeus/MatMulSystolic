@@ -6,16 +6,6 @@ import com.sun.org.apache.bcel.internal.generic.FLOAD;
 public class MatMul {
 
 
-    static class VecFloat {
-        final float[] vals;
-
-        VecFloat(float ... vals){
-            this.vals = new float[vals.length];
-            for(int i = 0 ; i < vals.length ; i++){
-                this.vals[i] = vals[i];
-            }
-        }
-    }
 
     static class ChannelAData {
         final VecFloat data;
@@ -28,9 +18,9 @@ public class MatMul {
     }
 
 
-    static final int DOT_PROD_VECTOR_SIZE = 1;
-    static final int SYS_ARRAY_NUM_ROWS = 4;
-    static final int SYS_ARRAY_NUM_COLS = 4;
+    static final int DOT_PROD_VECTOR_SIZE = 4;
+    static final int SYS_ARRAY_NUM_ROWS = 5;
+    static final int SYS_ARRAY_NUM_COLS = 7;
     static final int INTERLEAVED  = 4; // Cols/Rows interleaved
     static final int MATRIX_A_BLOCK_HEIGHT = INTERLEAVED * SYS_ARRAY_NUM_ROWS;
     static final int MATRIX_B_BLOCK_WIDTH = INTERLEAVED * SYS_ARRAY_NUM_COLS;
@@ -935,7 +925,7 @@ public class MatMul {
         float[] b_blocked = flatten(b,widthb,widtha);
         VecFloat[] b_blocked_vec = vectorize(b_blocked, DOT_PROD_VECTOR_SIZE);
         VecFloat[] res = new VecFloat[(heighta * widthb) / SYS_ARRAY_NUM_COLS ];
-        run_Mat_mul(a_blocked_vec, widtha , heighta, widthb, b_blocked_vec, res);
+        MatMulBeauty.run_Mat_mul(a_blocked_vec, widtha , heighta, widthb, b_blocked_vec, res);
         float[] resv = devectorize(res, SYS_ARRAY_NUM_COLS);
         float[][] resw =  deflatten(resv, widthb, heighta);
         return resw;
@@ -1203,7 +1193,8 @@ public class MatMul {
     }
 
     public static void main(String[] argv){
-        int width = Math.max(MATRIX_A_BLOCK_HEIGHT,MATRIX_B_BLOCK_WIDTH) * 1 ;
+        int factor = 10;
+        int width = SYS_ARRAY_NUM_ROWS * SYS_ARRAY_NUM_COLS * INTERLEAVED ;
         //new WatchEm().start();;
         float[][] ident = testMat(width);
         checkem(ident,ident,width,width,width, 0.001f);

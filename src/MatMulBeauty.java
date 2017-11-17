@@ -1,36 +1,36 @@
 public class MatMulBeauty {
 
-    static final int DOT_PROD_VECTOR_SIZE = 1;
-    static final int SYS_ARRAY_NUM_ROWS = 4;
-    static final int SYS_ARRAY_NUM_COLS = 4;
-    static final int INTERLEAVED  = 4; // Cols/Rows interleaved
+    static final int DOT_PROD_VECTOR_SIZE = MatMul.DOT_PROD_VECTOR_SIZE;
+    static final int SYS_ARRAY_NUM_ROWS = MatMul.SYS_ARRAY_NUM_ROWS;
+    static final int SYS_ARRAY_NUM_COLS = MatMul.SYS_ARRAY_NUM_COLS;
+    static final int INTERLEAVED  = MatMul.INTERLEAVED; // Cols/Rows interleaved
     static final int MATRIX_A_BLOCK_HEIGHT = INTERLEAVED * SYS_ARRAY_NUM_ROWS;
     static final int MATRIX_B_BLOCK_WIDTH = INTERLEAVED * SYS_ARRAY_NUM_COLS;
-    static final int NR_INTERLEAVED = INTERLEAVED * INTERLEAVED;
+    static final int INTERLEAVED_SQUARE = INTERLEAVED * INTERLEAVED;
 
     static final VecFloat VECTOR_ZERO = new VecFloat(0,0,0,0);
 
     static final int QUEUE_SIZE = 1;
 
 
-    static <E> WatchFIFO<E>[] channelRow(int size){
+    static <E> WatchFIFO<E>[] channelRow(int size, int queueSize){
         WatchFIFO<E>[] res = new WatchFIFO[size];
         for(int i = 0 ; i < size ; i++){
-            res[i] = new WatchFIFO<E>(QUEUE_SIZE);
+            res[i] = new WatchFIFO<E>(queueSize);
         }
         return res;
     }
 
-    static <E> WatchFIFO<E>[][] channelGrid(int rows, int cols){
+    static <E> WatchFIFO<E>[][] channelGrid(int rows, int cols,int queueSize){
         WatchFIFO<E>[][] res = new WatchFIFO[rows][];
         for(int row = 0 ; row < rows ; row++){
-            res[row] = channelRow(cols);
+            res[row] = channelRow(cols, queueSize);
         }
         return res;
     }
 
-    static <E> WatchFIFO<E>[][] channelGridSystolic(){
-        return channelGrid(SYS_ARRAY_NUM_ROWS, SYS_ARRAY_NUM_ROWS);
+    static <E> WatchFIFO<E>[][] channelGridSystolic(int queueSize){
+        return channelGrid(SYS_ARRAY_NUM_ROWS, SYS_ARRAY_NUM_COLS, queueSize);
     }
 
     static final WatchFIFO<ChannelAData>[] row_feed_chain;
@@ -44,15 +44,15 @@ public class MatMulBeauty {
     static final WatchFIFO<VecFloat>[] col_c_chain;
 
     static {
-        ch_data_a = channelGridSystolic();
-        ch_data_b = channelGridSystolic();
-        row_feed_chain = channelRow(SYS_ARRAY_NUM_ROWS);
-        row_feed_to_buf = channelRow(SYS_ARRAY_NUM_ROWS);
-        col_feed_chain = channelRow(SYS_ARRAY_NUM_COLS);
-        col_feed_to_buf = channelRow(SYS_ARRAY_NUM_COLS);
-        ch_data_c = channelGridSystolic();
-        ch_drain_c = channelGridSystolic();
-        col_c_chain = channelRow(SYS_ARRAY_NUM_ROWS);
+        ch_data_a = channelGridSystolic(QUEUE_SIZE);
+        ch_data_b = channelGridSystolic(QUEUE_SIZE);
+        row_feed_chain = channelRow(SYS_ARRAY_NUM_ROWS, QUEUE_SIZE);
+        row_feed_to_buf = channelRow(SYS_ARRAY_NUM_ROWS, QUEUE_SIZE);
+        col_feed_chain = channelRow(SYS_ARRAY_NUM_COLS, QUEUE_SIZE);
+        col_feed_to_buf = channelRow(SYS_ARRAY_NUM_COLS,QUEUE_SIZE);
+        ch_data_c = channelGridSystolic(INTERLEAVED_SQUARE);
+        ch_drain_c = channelGridSystolic(QUEUE_SIZE);
+        col_c_chain = channelRow(SYS_ARRAY_NUM_COLS,QUEUE_SIZE);
     }
 
 
@@ -73,15 +73,13 @@ public class MatMulBeauty {
     }
 
 
-    static class VecFloat {
-        final float[] vals;
 
-        VecFloat(float ... vals){
-            this.vals = new float[vals.length];
-            for(int i = 0 ; i < vals.length ; i++){
-                this.vals[i] = vals[i];
-            }
+    static VecFloat[] initVecFloatArray(int size){
+        VecFloat[] res = new VecFloat[size];
+        for(int i = 0 ; i < size; i++){
+            res[i] = VECTOR_ZERO;
         }
+        return res;
     }
 
 
@@ -98,36 +96,55 @@ public class MatMulBeauty {
 
     static class LoadMatA extends Thread {
         final VecFloat[] A;
-        final int mat_a_num_vectors_in_row;
-        final int mat_a_num_blocks_in_col;
-        final int mat_b_num_blocks_in_row;
+        final int nrXBlocks;
+        final int nrYBlocks;
+        final int dotProdVecLength;
 
 
-        LoadMatA(VecFloat[] A, int mat_a_num_vectors_in_row, int mat_a_num_blocks_in_col, int mat_b_num_blocks_in_row){
+        LoadMatA(VecFloat[] A, int nrXBlocks, int nrYBlocks, int dotProdVecLength){
             this.A = A;
-            this.mat_a_num_vectors_in_row = mat_a_num_vectors_in_row;
-            this.mat_a_num_blocks_in_col = mat_a_num_blocks_in_col;
-            this.mat_b_num_blocks_in_row = mat_b_num_blocks_in_row;
+            this.nrXBlocks = nrXBlocks;
+            this.nrYBlocks = nrYBlocks;
+            this.dotProdVecLength = dotProdVecLength;
         }
 
         public void run(){
-            for(int rowBlock = 0 ; rowBlock < mat_a_num_blocks_in_col ; rowBlock++){
-                for(int reuse = 0 ; reuse < mat_b_num_blocks_in_row ; reuse++){
-                    feedRowBlock(rowBlock);
+
+            syncWithB();
+            boolean first = true;
+            for(int rowBlock = 0 ; rowBlock < nrYBlocks ; rowBlock++){
+                for(int reuse = 0 ; reuse < nrXBlocks ; reuse++){
+                    feedRowBlock(rowBlock,first);
+                    first = false;
                 }
             }
             flushLastBlock();
         }
 
-        private void flushLastBlock() {
+        void syncWithB(){
+            /* Because of buffering, Matrix B feeder start feeding
+               actual data after recieving INTERLEAVED vectors per B-buffer element
 
+               However, Matrix A feeder do not need this; they can start after recieving
+               zero elements. To sync up them both
+               we first feed INTERLEAVED zero vector to each A-buffer element.
+               This means a total of SYS_ARRAY_NUM_ROWS * INTERLEAVED zero
+               vectors.
+            */
+            for(int row = 0 ; row < SYS_ARRAY_NUM_ROWS * INTERLEAVED  ; row++){
+                VecFloat vec =VECTOR_ZERO;
+                boolean new_row_col_pair = false;
+                ChannelAData data = new ChannelAData(vec,new_row_col_pair);
+                write_channel_intel(row_feed_chain[0],data);
+            }
         }
 
-        void feedRowBlock(int rowBlock){
-            for(int col = 0 ; col < mat_a_num_vectors_in_row; col++){
+
+        void feedRowBlock(int rowBlock,boolean first){
+            for(int col = 0 ; col < dotProdVecLength; col++){
                 for(int row = 0 ; row < MATRIX_A_BLOCK_HEIGHT ; row++){
                     VecFloat vec = A[computeIndex(rowBlock, col, row)];
-                    boolean new_row_col_pair = row == 0;
+                    boolean new_row_col_pair = !first && col == 0;
                     ChannelAData data = new ChannelAData(vec,new_row_col_pair);
                     write_channel_intel(row_feed_chain[0],data);
                 }
@@ -135,10 +152,85 @@ public class MatMulBeauty {
         }
 
         int computeIndex(int rowBlock, int col, int row_in_block){
-            return (rowBlock * MATRIX_A_BLOCK_HEIGHT + row_in_block) + col;
+            return (rowBlock * MATRIX_A_BLOCK_HEIGHT + row_in_block) * dotProdVecLength + col;
+        }
+
+        private void flushLastBlock() {
+            /* There is a block of results still in the PEs
+               to flush this, we need to first need to indicate the end
+               of block with new_row_col_pair is true
+               for every result in each PE.
+            */
+            for(int row = 0 ; row < MATRIX_A_BLOCK_HEIGHT ; row++){
+                VecFloat vec =VECTOR_ZERO;
+                boolean new_row_col_pair = true;
+                ChannelAData data = new ChannelAData(vec,new_row_col_pair);
+                write_channel_intel(row_feed_chain[0],data);
+            }
+            /* to propagate the results through the system, new elements are needed
+               to avoid special casing every where, hence we keep feeding elements
+               to fully flush the system */
+            while(true){
+                boolean new_row_col_pair = true;
+                ChannelAData data = new ChannelAData(VECTOR_ZERO,new_row_col_pair);
+                write_channel_intel(row_feed_chain[0],data);
+            }
+
         }
     }
 
+    // input is transposed
+    static class LoadMatB extends Thread {
+        final VecFloat[] B;
+        final int nrXBlocks;
+        final int nrYBlocks;
+        final int dotProdVecLength;
+
+
+        LoadMatB(VecFloat[] B, int nrXBlocks, int nrYBlocks, int dotProdVecLength){
+            this.B = B;
+            this.nrXBlocks = nrXBlocks;
+            this.nrYBlocks = nrYBlocks;
+            this.dotProdVecLength = dotProdVecLength;
+        }
+
+
+        public void run(){
+            for(int reuse = 0 ; reuse < nrYBlocks; reuse++){
+                for(int colBlock = 0 ; colBlock < nrXBlocks ; colBlock++){
+                    feedCollumnBlock(colBlock);
+                }
+            }
+            flushLastBlock();
+        }
+
+
+        void feedCollumnBlock(int colBlock){
+            for(int row = 0 ; row < dotProdVecLength ; row++){
+                for(int col = 0 ; col < MATRIX_B_BLOCK_WIDTH  ; col++){
+                    int index = computeIndex(colBlock, row, col);
+                    write_channel_intel(col_feed_chain[0],B[index]);
+                }
+            }
+        }
+
+        private int computeIndex(int colBlock, int row, int col) {
+            return (colBlock * MATRIX_B_BLOCK_WIDTH + col) *  dotProdVecLength + row;
+        }
+
+
+
+        private void flushLastBlock() {
+                while(true){
+//                for(int col = 0 ; col < MATRIX_B_BLOCK_WIDTH ; col++){
+                    write_channel_intel(col_feed_chain[0],VECTOR_ZERO);
+                }
+        }
+    }
+
+
+    // The feeder obtain data from the loader and distribute the data
+    // round robin fashion of the buffers
 
     static class FeedMatA extends Thread {
         final int row;
@@ -149,13 +241,16 @@ public class MatMulBeauty {
 
         public void run() {
             final int nrFeedersBelow = (SYS_ARRAY_NUM_ROWS - 1) - row;
-
+            int count = 0;
             while (true) {
+
+
                 ChannelAData read = read_channel_intel(row_feed_chain[row]);
-                for (int feeder = 0; feeder < nrFeedersBelow; feeder++) {
-                    write_channel_intel(row_feed_chain[row], read);
-                }
                 write_channel_intel(row_feed_to_buf[row], read);
+                for (int feeder = 0; feeder < nrFeedersBelow; feeder++) {
+                    read = read_channel_intel(row_feed_chain[row]);
+                    write_channel_intel(row_feed_chain[row+1], read);
+                }
             }
         }
 
@@ -175,23 +270,19 @@ public class MatMulBeauty {
             final int nrFeedersRight = (SYS_ARRAY_NUM_COLS - 1) - col;
 
             while (true) {
+
                 VecFloat read = read_channel_intel(col_feed_chain[col]);
+                write_channel_intel(col_feed_to_buf[col], read);
                 for (int feeder = 0; feeder < nrFeedersRight; feeder++) {
-                    write_channel_intel(col_feed_chain[col], read);
+                    read = read_channel_intel(col_feed_chain[col]);
+                    write_channel_intel(col_feed_chain[col+1], read);
                 }
-                write_channel_intel(col_feed_chain[col], read);
             }
         }
 
     }
 
-    static VecFloat[] initVecFloatArray(int size){
-        VecFloat[] res = new VecFloat[size];
-        for(int i = 0 ; i < size; i++){
-            res[i] = VECTOR_ZERO;
-        }
-        return res;
-    }
+
 
     static class Buf_mat_a_kernel extends Thread {
 
@@ -202,12 +293,14 @@ public class MatMulBeauty {
         }
 
         public void run(){
-            ChannelAData feed = new ChannelAData(VECTOR_ZERO, false);
+            ChannelAData feed;
             while(true){
+                feed = read_channel_intel(row_feed_to_buf[row]);
                 for(int reuse = 0 ; reuse < INTERLEAVED ; reuse++){
                     write_channel_intel(ch_data_a[row][0],feed);
                 }
-                feed = read_channel_intel(row_feed_to_buf[row]);
+
+
             }
         }
     }
@@ -256,8 +349,8 @@ public class MatMulBeauty {
 
         public void run() {
 
-            float[] interleave_shift = new float[NR_INTERLEAVED];
-            for (int i=0; i < NR_INTERLEAVED  ; i++) {
+            float[] interleave_shift = new float[INTERLEAVED_SQUARE];
+            for (int i = 0; i < INTERLEAVED_SQUARE; i++) {
                 interleave_shift[i] = 0.0f;
             }
 
@@ -271,17 +364,23 @@ public class MatMulBeauty {
 
                 float sum;
                 if(read_A.new_row_col_pair) {
-                    write_channel_intel(ch_data_c[row][col],interleave_shift[NR_INTERLEAVED-1]);
+                   // System.out.printf("Flush! %d %d %d\n", row, col, ch_data_c[row][col].q.remainingCapacity());
+                    write_channel_intel(ch_data_c[row][col],interleave_shift[INTERLEAVED_SQUARE -1]);
                     sum = 0f;
                 } else {
-                    sum = interleave_shift[NR_INTERLEAVED-1];
+                    sum = interleave_shift[INTERLEAVED_SQUARE -1];
                 }
-
                 for(int d=0; d < DOT_PROD_VECTOR_SIZE; ++d) sum += read_A.data.vals[d] * b_data.vals[d];
-                for (int i = NR_INTERLEAVED-1; i >= 1; i--) interleave_shift[i] = interleave_shift[i - 1];
+                shiftRight(interleave_shift, INTERLEAVED_SQUARE);
                 interleave_shift[0] = sum;
             }
 
+        }
+
+        void shiftRight(float[] arr, int length){
+            for(int i = length -1 ; i >= 1 ;i--){
+                arr[i] = arr[i-1];
+            }
         }
     }
 
@@ -296,19 +395,20 @@ public class MatMulBeauty {
 
         public void run() {
             while (true) {
-                for(int r = 0 ; r < row ; r++){
-                    for(int i = 0 ; i < NR_INTERLEAVED ; i++){
-                        float read = read_channel_intel(ch_drain_c[row-1][col]);
-                        write_channel_intel(ch_drain_c[row][col], read);
-                    }
+                // pass on data from above
+                for (int i = 0; i < INTERLEAVED * row; i++) {
+                    float read = read_channel_intel(ch_drain_c[row - 1][col]);
+                    write_channel_intel(ch_drain_c[row][col], read);
                 }
-                for(int i = 0 ; i < NR_INTERLEAVED ; i++){
+                // pass on own data
+                for (int i = 0; i < INTERLEAVED; i++) {
                     float read = read_channel_intel(ch_data_c[row][col]);
                     write_channel_intel(ch_drain_c[row][col], read);
                 }
             }
 
         }
+
     }
 
 
@@ -353,19 +453,53 @@ public class MatMulBeauty {
         }
 
         public void run(){
-            int num_vec_per_row = MATRIX_B_BLOCK_WIDTH * nrXBlocks;
+            int num_vec_per_row = INTERLEAVED * nrXBlocks;
             for(int yblock = 0 ; yblock < nrYBlocks ; yblock++){
                 for(int xblock = 0; xblock < nrXBlocks ; xblock++){
                     for(int ylocal = 0 ; ylocal < MATRIX_A_BLOCK_HEIGHT ; ylocal++) {
-                        for (int xlocal = 0; xlocal < MATRIX_B_BLOCK_WIDTH; xlocal++) {
-                            int index = ((yblock * MATRIX_A_BLOCK_HEIGHT + ylocal) * num_vec_per_row + (xblock * MATRIX_B_BLOCK_WIDTH) + xlocal;
+                        for (int xlocal = 0; xlocal < INTERLEAVED; xlocal++) {
+                            int index = ((yblock * MATRIX_A_BLOCK_HEIGHT + ylocal) * num_vec_per_row) + (xblock * INTERLEAVED) + xlocal;
                             VecFloat dataIn = read_channel_intel(col_c_chain[0]);
                             toMem[index] = dataIn;
                         }
                     }
+                    System.err.println("Writing yblock : " + yblock + ", xblock : " +xblock);
                 }
             }
         }
+
+    }
+
+
+    public static void run_Mat_mul(VecFloat[] a, int widtha, int heighta, int widthb, VecFloat[] b, VecFloat[] c){
+        int nrXBlocks = widthb / MATRIX_B_BLOCK_WIDTH;
+        int nrYBlocks = widtha / MATRIX_A_BLOCK_HEIGHT;
+        int dotProdVecLength = widtha / DOT_PROD_VECTOR_SIZE;
+        new LoadMatA(a, nrXBlocks, nrYBlocks, dotProdVecLength ).start();
+
+        new LoadMatB(b,nrXBlocks, nrYBlocks, dotProdVecLength).start();
+
+        for(int i = 0 ; i < SYS_ARRAY_NUM_ROWS ; i++){
+            new FeedMatA(i).start();
+            new Buf_mat_a_kernel(i).start();
+        }
+        for(int i = 0 ; i < SYS_ARRAY_NUM_COLS ; i++){
+            new FeedMatB(i).start();
+            new Buf_mat_b_kernel(i).start();
+        }
+
+        for(int i = 0 ; i < SYS_ARRAY_NUM_ROWS; i++){
+            for(int j = 0 ; j < SYS_ARRAY_NUM_COLS; j++) {
+                new PE_Kernel(i,j).start();
+                new Drain_C(i,j).start();
+            }
+        }
+
+        for(int i = 0 ; i < SYS_ARRAY_NUM_COLS; i++){
+            new Drain_C_cols(i).start();
+        }
+
+        new Drain_to_mem(c,nrXBlocks, nrYBlocks).run();
 
     }
 
