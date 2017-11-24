@@ -320,7 +320,6 @@ void feedColumnBlock(__global vec_float_t* restrict B, unsigned int colBlock,
         }
     }
 }
-
 // The feeders obtain data from the loader and distribute the data
 // round robin fashion over the buffers
 
@@ -333,12 +332,14 @@ __kernel void feed_mat_A_kernel()
 	const int row = get_compute_id(0);
     const int nrFeedersBelow = (SYS_ARRAY_NUM_ROWS - 1) - row;
 	while (true) {
-		struct  ch_data_a_struct read;
-		read = read_channel_intel(row_feed_chain[row]);
-		write_channel_intel(row_feed_to_buf[row], read);
-		for (int feeder = 0; feeder < nrFeedersBelow; feeder++) {
+		for (int feeder = 0; feeder < nrFeedersBelow + 1; feeder++) {
+            struct  ch_data_a_struct read;
 		    read = read_channel_intel(row_feed_chain[row]);
-		    write_channel_intel(row_feed_chain[row+1], read);
+            if(feeder ==0){
+                write_channel_intel(row_feed_to_buf[row], read);
+            } else {
+		        write_channel_intel(row_feed_chain[row+1], read);
+            }
 		}
 	}
 }
@@ -352,11 +353,13 @@ __kernel void feed_mat_B_kernel()
 	const int col = get_compute_id(0);
 	const int nrFeedersRight = (SYS_ARRAY_NUM_COLS - 1) - col;
  	while(true) {
-		vec_float_t read = read_channel_intel(col_feed_chain[col]);
- 		write_channel_intel(col_feed_to_buf[col], read);
- 	    for (int feeder = 0; feeder < nrFeedersRight; feeder++) {
- 	       read = read_channel_intel(col_feed_chain[col]);
- 	       write_channel_intel(col_feed_chain[col+1], read);
+ 	    for (int feeder = 0; feeder < nrFeedersRight + 1; feeder++) {
+ 	       vec_float_t read = read_channel_intel(col_feed_chain[col]);
+           if(feeder == 0){
+               write_channel_intel(col_feed_to_buf[col], read);
+            } else { 
+ 	             write_channel_intel(col_feed_chain[col+1], read);
+            }
  	    }
 	}
 }
@@ -461,8 +464,6 @@ __kernel void PE_kernel()
 }
 
 
-
-
 __attribute__((max_global_work_dim(0)))
 __attribute__((autorun))
 __attribute__((num_compute_units(SYS_ARRAY_NUM_ROWS,SYS_ARRAY_NUM_COLS)))
@@ -474,21 +475,17 @@ __kernel void drain_C()
 	int interleaved = 0;
 	while (true) {
 		// pass on data from above
-		for (int i = 0; i < INTERLEAVED * row; i++) {
-		    float read = read_channel_intel(ch_drain_c[row - 1][col]);
-		    write_channel_intel(ch_drain_c[row][col], read);
-		}
-		// pass on own data
-		for (int i = 0; i < INTERLEAVED; i++) {
-		    float read = read_channel_intel(ch_data_c[row][col]);
+		for (int i = 0; i < INTERLEAVED * (row + 1); i++) {
+		    float read;
+            if(i < INTERLEAVED * row){
+                read = read_channel_intel(ch_drain_c[row - 1][col]);
+            } else {
+                read = read_channel_intel(ch_data_c[row][col]);
+            }
 		    write_channel_intel(ch_drain_c[row][col], read);
 		}
 	}
-	
-
- 
 }
-
 
 __attribute__((autorun))
 __attribute__((max_global_work_dim(0)))
