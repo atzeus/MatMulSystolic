@@ -490,9 +490,9 @@ __kernel void PE_kernel()
 
 		vec_float_t b_data;
         if(row == 0){
-            read_channel_intel(ch_data_b_border[col]);
+            b_data = read_channel_intel(ch_data_b_border[col]);
         } else {
-			read_channel_intel(ch_data_b[row-1][col]);
+			b_data = read_channel_intel(ch_data_b[row-1][col]);
         }
 		if (row < (SYS_ARRAY_NUM_ROWS-1)) 
 			write_channel_intel(ch_data_b[row][col], b_data);
