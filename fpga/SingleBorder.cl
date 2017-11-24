@@ -229,16 +229,22 @@ channel float                    ch_drain_c
 channel float                    ch_drain_c_border       
 	[SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
 
+channel struct ch_data_a_struct  row_feed_chain_border        
+	 __attribute__((depth(0)));
 channel struct ch_data_a_struct  row_feed_chain        
-	[SYS_ARRAY_NUM_ROWS] __attribute__((depth(0)));
+	[SYS_ARRAY_NUM_ROWS-1] __attribute__((depth(0)));
 channel struct ch_data_a_struct  row_feed_to_buf 
 	[SYS_ARRAY_NUM_ROWS]         __attribute__((depth(0)));
 
+channel vec_float_t  	 col_feed_chain_border        
+    __attribute__((depth(0)));
 channel vec_float_t  	 col_feed_chain        
-	[SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
+	[SYS_ARRAY_NUM_COLS-1] __attribute__((depth(0)));
 channel vec_float_t	     col_feed_to_buf 
 	[SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
 
+channel struct custom_float_array  col_c_chain_border          
+     __attribute__((depth(0)));
 channel struct custom_float_array  col_c_chain          
 	[SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
 
@@ -294,7 +300,7 @@ __kernel void load_mat_A_and_forward(
         					* dotProdVecLength + col;
 	    write.data = load ? A[index] : VECTOR_ZERO;
 	    write.new_row_col_pair = flush || (!first && col == 0);
-        write_channel_intel(row_feed_chain[0],write);
+        write_channel_intel(row_feed_chain_border,write);
         if(sync) {
             if (row == SYS_ARRAY_NUM_ROWS * INTERLEAVED - 1) {
                 sync = false;
@@ -363,7 +369,7 @@ __kernel void load_mat_B_and_forward( __global vec_float_t* restrict B,
                     int index = (colBlock * MATRIX_B_BLOCK_WIDTH + col) * 
                                      dotProdVecLength + row;
                     vec_float_t vec = row >= dotProdVecLength ? VECTOR_ZERO : B[index];
-                    write_channel_intel(col_feed_chain[0],vec);
+                    write_channel_intel(col_feed_chain_border,vec);
                 }
             }
         }
@@ -386,11 +392,15 @@ __kernel void feed_mat_A_kernel()
     const int nrFeedersBelow = (SYS_ARRAY_NUM_ROWS - 1) - row;
 	while (true) {
 		struct  ch_data_a_struct read;
-		read = read_channel_intel(row_feed_chain[row]);
+        if(row == 0){
+            read = read_channel_intel(row_feed_chain_border);
+        } else {
+		    read = read_channel_intel(row_feed_chain[row-1]);
+        }
 		write_channel_intel(row_feed_to_buf[row], read);
 		for (int feeder = 0; feeder < nrFeedersBelow; feeder++) {
 		    read = read_channel_intel(row_feed_chain[row]);
-		    write_channel_intel(row_feed_chain[row+1], read);
+		    write_channel_intel(row_feed_chain[row], read);
 		}
 	}
 }
@@ -404,11 +414,16 @@ __kernel void feed_mat_B_kernel()
 	const int col = get_compute_id(0);
 	const int nrFeedersRight = (SYS_ARRAY_NUM_COLS - 1) - col;
  	while(true) {
-		vec_float_t read = read_channel_intel(col_feed_chain[col]);
+		vec_float_t read;
+        if(col == 0){
+            read = read_channel_intel(col_feed_chain_border);
+        } else {
+            read = read_channel_intel(col_feed_chain[col-1]);
+        }
  		write_channel_intel(col_feed_to_buf[col], read);
  	    for (int feeder = 0; feeder < nrFeedersRight; feeder++) {
  	       read = read_channel_intel(col_feed_chain[col]);
- 	       write_channel_intel(col_feed_chain[col+1], read);
+ 	       write_channel_intel(col_feed_chain[col], read);
  	    }
 	}
 }
@@ -557,17 +572,21 @@ __kernel void drain_C_chain_node_kernel() {
 	unsigned col = get_compute_id(0);
 
 	while(true){
-		float in = read_channel_intel(ch_drain_c[SYS_ARRAY_NUM_ROWS-1][col]);
+		float in = read_channel_intel(ch_drain_c_border[col]);
 		struct custom_float_array prev_node_data_in;
 		if(col != SYS_ARRAY_NUM_COLS - 1)
-		    prev_node_data_in = read_channel_intel(col_c_chain[col + 1]);
+		    prev_node_data_in = read_channel_intel(col_c_chain[col]);
 
 		struct custom_float_array write;
 		for (int i = col + 1; i < SYS_ARRAY_NUM_COLS; i++)
 		    write.vals[i] = prev_node_data_in.vals[i];
 
 		write.vals[col] = in;
-		write_channel_intel(col_c_chain[col],write);
+        if(col == 0){
+		    write_channel_intel(col_c_chain_border,write);
+        } else {        
+		    write_channel_intel(col_c_chain[col-1],write);
+        }
 
 
 	}
@@ -582,7 +601,7 @@ __kernel void drain_C_write_tree_root_to_mem_kernel(__global struct custom_float
 		        for (int xlocal = 0; xlocal < INTERLEAVED; xlocal++) {
 		            int index = ((yblock * MATRIX_A_BLOCK_HEIGHT + ylocal) * num_vec_per_row) + (xblock * INTERLEAVED) + xlocal;
                     printf("got data xblock %d yblock %d x %d y %d \n",  xblock, yblock, xlocal,ylocal);
-		            struct custom_float_array dataIn = read_channel_intel(col_c_chain[0]);
+		            struct custom_float_array dataIn = read_channel_intel(col_c_chain_border);
 		            C[index] = dataIn;
                     
 		        }
