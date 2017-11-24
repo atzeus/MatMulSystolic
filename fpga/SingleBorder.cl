@@ -521,6 +521,7 @@ __kernel void PE_kernel()
 
 
 
+
 __attribute__((max_global_work_dim(0)))
 __attribute__((autorun))
 __attribute__((num_compute_units(SYS_ARRAY_NUM_ROWS,SYS_ARRAY_NUM_COLS)))
@@ -532,19 +533,20 @@ __kernel void drain_C()
 	int interleaved = 0;
 	while (true) {
 		// pass on data from above
-		for (int i = 0; i < INTERLEAVED * row; i++) {
-		    float read = read_channel_intel(ch_drain_c[row - 1][col]);
-		    write_channel_intel(ch_drain_c[row][col], read);
-		}
-		// pass on own data
-		for (int i = 0; i < INTERLEAVED; i++) {
-		    float read = read_channel_intel(ch_data_c[row][col]);
-		    write_channel_intel(ch_drain_c[row][col], read);
+		for (int i = 0; i < INTERLEAVED * (row + 1); i++) {
+		    float read;
+            if(i < INTERLEAVED * row){
+                read = read_channel_intel(ch_drain_c[row - 1][col]);
+            } else {
+                read = read_channel_intel(ch_data_c[row][col]);
+            }
+            if(row == SYS_ARRAY_NUM_ROWS - 1) {
+                write_channel_intel(ch_drain_c_border[col], read);
+            } else {
+		        write_channel_intel(ch_drain_c[row][col], read);
+            }
 		}
 	}
-	
-
- 
 }
 
 
