@@ -504,8 +504,6 @@ __kernel void drain_C_chain_node_kernel() {
 
 		write.vals[col] = in;
 		write_channel_intel(col_c_chain[col],write);
-
-
 	}
 }
 

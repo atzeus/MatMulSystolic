@@ -520,7 +520,7 @@ __kernel void drain_C_write_tree_root_to_mem_kernel(__global struct custom_float
 		    for(int ylocal = 0 ; ylocal < MATRIX_A_BLOCK_HEIGHT ; ylocal++) {
 		        for (int xlocal = 0; xlocal < INTERLEAVED; xlocal++) {
 		            int index = ((yblock * MATRIX_A_BLOCK_HEIGHT + ylocal) * num_vec_per_row) + (xblock * INTERLEAVED) + xlocal;
-                    printf("got data xblock %d yblock %d x %d y %d \n",  xblock, yblock, xlocal,ylocal);
+                    printf("got data xblock %d of %d  yblock %d of %d x %d y %d \n",  xblock, nrXBlocks, yblock, nrYBlocks, xlocal,ylocal);
 		            struct custom_float_array dataIn = read_channel_intel(col_c_chain[0]);
 		            C[index] = dataIn;
                     
