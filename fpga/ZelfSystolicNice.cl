@@ -270,14 +270,13 @@ __kernel void load_mat_A_and_forward(
   for(int rowBlock = 0 ; rowBlock < nrYBlocks ; rowBlock++){
   	for(int reuse = 0 ; reuse < nrXBlocks ; reuse++){
   		feedRowBlock(A,rowBlock, first, dotProdVecLength);
-	    first = false;
     }
   }
 }
 
 void feedRowBlock(__global  vec_float_t* restrict A, int rowBlock,bool first, 
 	int dotProdVecLength){
-    const lastCol = dotProdVecLength - 1;
+    const int lastCol = dotProdVecLength - 1;
     for(int col = 0 ; col < dotProdVecLength; col++){
         for(int row = 0 ; row < MATRIX_A_BLOCK_HEIGHT ; row++){
         	int index =  (rowBlock * MATRIX_A_BLOCK_HEIGHT + row) 
@@ -287,7 +286,7 @@ void feedRowBlock(__global  vec_float_t* restrict A, int rowBlock,bool first,
 			// the "last" boolean indicates if an old result 
 			// should be flushed
 			// this is the case if on the last column
-			write.new_row_col_pair = col == lastCol;
+			write.last = col == lastCol;
 		    write_channel_intel(row_feed_chain[0],write);				
         }
     }
