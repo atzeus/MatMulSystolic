@@ -296,7 +296,11 @@ __kernel void load_mat_A_and_forward(
         struct  ch_data_a_struct write;
 	    int index =  (rowBlock * MATRIX_A_BLOCK_HEIGHT + row) 
         					* dotProdVecLength + col;
-	    write.data = load ? A[index] : VECTOR_ZERO;
+        if(load) {
+            write.data = A[index];
+        } else {
+            write.data = VECTOR_ZERO;
+        }
 	    write.new_row_col_pair = flush || (!first && col == 0);
         write_channel_intel(row_feed_chain_border,write);
         if(sync) {
@@ -366,7 +370,12 @@ __kernel void load_mat_B_and_forward( __global vec_float_t* restrict B,
                 for(int col = 0 ; col < MATRIX_B_BLOCK_WIDTH  ; col++){
                     int index = (colBlock * MATRIX_B_BLOCK_WIDTH + col) * 
                                      dotProdVecLength + row;
-                    vec_float_t vec = row >= dotProdVecLength ? VECTOR_ZERO : B[index];
+                    vec_float_t vec;
+                    if( row >= dotProdVecLength){
+                        vec = VECTOR_ZERO;
+                    } else {
+                        vec = B[index];
+                    }
                     write_channel_intel(col_feed_chain_border,vec);
                 }
             }
