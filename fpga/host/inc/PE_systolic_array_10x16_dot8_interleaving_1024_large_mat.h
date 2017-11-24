@@ -5,10 +5,10 @@
 #define DOT_PROD_VECTOR_SIZE      4
 #define DOT_PROD_VECTOR_LEVELS    3
 
-#define ACCUM_SHIFT_REG_SIZE      4
+#define ACCUM_SHIFT_REG_SIZE      1024
 #define C_OUT_SHIFT_REG_SIZE      ACCUM_SHIFT_REG_SIZE
 
-#define SYS_ARRAY_NUM_ROWS        5
+#define SYS_ARRAY_NUM_ROWS        4
 #define SYS_ARRAY_NUM_COLS        3
 
 #define ROWS_INTERLEAVED          2
