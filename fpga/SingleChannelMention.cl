@@ -269,12 +269,12 @@ __kernel void load_mat_A_and_forward(
 { 
   for(int rowBlock = 0 ; rowBlock < nrYBlocks ; rowBlock++){
   	for(int reuse = 0 ; reuse < nrXBlocks ; reuse++){
-  		feedRowBlock(A,rowBlock, first, dotProdVecLength);
+  		feedRowBlock(A,rowBlock, dotProdVecLength);
     }
   }
 }
 
-void feedRowBlock(__global  vec_float_t* restrict A, int rowBlock,bool first, 
+void feedRowBlock(__global  vec_float_t* restrict A, int rowBlock,
 	int dotProdVecLength){
     const int lastCol = dotProdVecLength - 1;
     for(int col = 0 ; col < dotProdVecLength; col++){
@@ -304,7 +304,7 @@ __kernel void load_mat_B_and_forward( __global vec_float_t* restrict B,
 {
 	for(int reuse = 0 ; reuse < nrYBlocks; reuse++){
 		for(int colBlock = 0 ; colBlock < nrXBlocks ; colBlock++){
-		    feedCollumnBlock(B,colBlock, dotProdVecLength);
+		    feedColumnBlock(B,colBlock, dotProdVecLength);
 		}
 	}
 }
