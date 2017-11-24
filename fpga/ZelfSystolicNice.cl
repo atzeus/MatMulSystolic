@@ -259,7 +259,7 @@ dotProdVecLength :
 	DOT_PROD_VECTOR_SIZE
 */
 
-void feedRowBlock(__global  vec_float_t* restrict A, int rowBlock,bool first, 
+void feedRowBlock(__global  vec_float_t* restrict A, int rowBlock,
 	int dotProdVecLength);
 
 __attribute__((max_global_work_dim(0)))
