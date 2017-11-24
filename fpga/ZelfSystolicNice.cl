@@ -391,10 +391,10 @@ __kernel void buf_mat_b_kernel()
 	for(int i = 0 ; i < INTERLEAVED ; i++){
 		buf[i] = 0.0f;
 	}
-	int i = 0;
+	int it = 0;
 	while(true){
         vec_float_t cur;
-        if(i < INTERLEAVED){
+        if(it < INTERLEAVED){
             cur = read_channel_intel(col_feed_to_buf[col]);
         } else {
             cur = buf[INTERLEAVED - 1];
@@ -404,6 +404,12 @@ __kernel void buf_mat_b_kernel()
 		for(int i = INTERLEAVED -1 ; i >= 1 ;i--)
 			buf[i] = buf[i-1];
         buf[0] = cur;
+       
+        if(it == INTERLEAVED_SQUARED - 1){
+            it = 0;
+        } else {
+            it++;
+        }
     }
 
         
@@ -520,7 +526,7 @@ __kernel void drain_C_write_tree_root_to_mem_kernel(__global struct custom_float
 		    for(int ylocal = 0 ; ylocal < MATRIX_A_BLOCK_HEIGHT ; ylocal++) {
 		        for (int xlocal = 0; xlocal < INTERLEAVED; xlocal++) {
 		            int index = ((yblock * MATRIX_A_BLOCK_HEIGHT + ylocal) * num_vec_per_row) + (xblock * INTERLEAVED) + xlocal;
-                    printf("got data xblock %d of %d  yblock %d of %d x %d y %d \n",  xblock, nrXBlocks, yblock, nrYBlocks, xlocal,ylocal);
+                    printf("got data xblock %d yblock %d x %d y %d \n",  xblock, yblock, xlocal,ylocal);
 		            struct custom_float_array dataIn = read_channel_intel(col_c_chain[0]);
 		            C[index] = dataIn;
                     
