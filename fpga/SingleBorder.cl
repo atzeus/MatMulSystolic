@@ -213,16 +213,22 @@ Replace for-loops with while loops.
        
 */
 
-
+channel struct ch_data_a_struct  ch_data_a_border        
+	[SYS_ARRAY_NUM_ROWS] __attribute__((depth(0)));
 channel struct ch_data_a_struct  ch_data_a        
-	[SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
+	[SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS-1] __attribute__((depth(0)));
+channel vec_float_t		 ch_data_b_border       
+	[SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
 channel vec_float_t		 ch_data_b       
-	[SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
+	[SYS_ARRAY_NUM_ROWS-1][SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
 channel float                    ch_data_c        
 	[SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS]  __attribute__((depth(INTERLEAVED_SQUARED)));
 
 channel float                    ch_drain_c       
-	[SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
+	[SYS_ARRAY_NUM_ROWS-1][SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
+channel float                    ch_drain_c_border       
+	[SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
+
 channel struct ch_data_a_struct  row_feed_chain        
 	[SYS_ARRAY_NUM_ROWS] __attribute__((depth(0)));
 channel struct ch_data_a_struct  row_feed_to_buf 
@@ -337,11 +343,6 @@ __kernel void load_mat_A_and_forward(
 
 
 
-
-void feedCollumnBlock(__global vec_float_t* restrict B, unsigned int colBlock, 
-    unsigned int dotProdVecLength);
-void flushLastBlockB();
-
 // input is transposed 
 __attribute__((max_global_work_dim(0)))
 __kernel void load_mat_B_and_forward( __global vec_float_t* restrict B, 
@@ -371,12 +372,6 @@ __kernel void load_mat_B_and_forward( __global vec_float_t* restrict B,
 }
 
 
-
-void flushLastBlockB() {
-    for(int col = 0 ; col < 2* MATRIX_B_BLOCK_WIDTH ; col++){
-        write_channel_intel(col_feed_chain[0],VECTOR_ZERO);
-    }
-}
 
 // The feeders obtain data from the loader and distribute the data
 // round robin fashion over the buffers
@@ -432,7 +427,7 @@ __kernel void buf_mat_a_kernel()
 		struct  ch_data_a_struct feed = 
 			read_channel_intel(row_feed_to_buf[row]);
 		for(int reuse = 0 ; reuse < INTERLEAVED ; reuse++){
-		    write_channel_intel(ch_data_a[row][0],feed);
+		    write_channel_intel(ch_data_a_border[row],feed);
 		}
 	}
 }
@@ -458,7 +453,7 @@ __kernel void buf_mat_b_kernel()
 	while(true){
 		for(int reuse = 0 ; reuse < INTERLEAVED ; reuse++){
 		     for(int i = 0 ; i < INTERLEAVED ; i++){
-                write_channel_intel(ch_data_b[0][col],buf[bufIndex][i]);
+                write_channel_intel(ch_data_b_border[col],buf[bufIndex][i]);
             }
 		    int backBuf = 1 - bufIndex;
 		    buf[backBuf][reuse] = read_channel_intel(col_feed_to_buf[col]);
@@ -484,15 +479,23 @@ __kernel void PE_kernel()
 
     int p = 0 ;
 	while(true){
-		struct  ch_data_a_struct read_A =
-			 read_channel_intel(ch_data_a[row][col]);
+		struct  ch_data_a_struct read_A;
+        if(col == 0){
+             read_A = read_channel_intel(ch_data_a_border[row]);
+        } else {
+	        read_A = read_channel_intel(ch_data_a[row][col-1]);
+        }
 		if (col < (SYS_ARRAY_NUM_COLS-1))
-			 write_channel_intel(ch_data_a[row][col+1], read_A);
+			 write_channel_intel(ch_data_a[row][col], read_A);
 
-		vec_float_t b_data = 
-			read_channel_intel(ch_data_b[row][col]);
+		vec_float_t b_data;
+        if(row == 0){
+            read_channel_intel(ch_data_b_border[col]);
+        } else {
+			read_channel_intel(ch_data_b[row-1][col]);
+        }
 		if (row < (SYS_ARRAY_NUM_ROWS-1)) 
-			write_channel_intel(ch_data_b[row+1][col], b_data);
+			write_channel_intel(ch_data_b[row][col], b_data);
 
 		float sum;
 		if(read_A.new_row_col_pair) {
@@ -529,13 +532,13 @@ __kernel void drain_C()
 	int interleaved = 0;
 	while (true) {
 		// pass on data from above
-		for (int i = 0; i < INTERLEAVED * (row + 1); i++) {
-		    float read;
-            if(i < INTERLEAVED * row){
-                read = read_channel_intel(ch_drain_c[row - 1][col]);
-            } else {
-                read = read_channel_intel(ch_data_c[row][col]);
-            }
+		for (int i = 0; i < INTERLEAVED * row; i++) {
+		    float read = read_channel_intel(ch_drain_c[row - 1][col]);
+		    write_channel_intel(ch_drain_c[row][col], read);
+		}
+		// pass on own data
+		for (int i = 0; i < INTERLEAVED; i++) {
+		    float read = read_channel_intel(ch_data_c[row][col]);
 		    write_channel_intel(ch_drain_c[row][col], read);
 		}
 	}

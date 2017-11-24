@@ -108,17 +108,82 @@ public class MatMulBeauty {
             this.dotProdVecLength = dotProdVecLength;
         }
 
-        public void run(){
-
-            syncWithB();
+        public void runSingleWrite(){
+            boolean sync = true;
             boolean first = true;
-            for(int rowBlock = 0 ; rowBlock < nrYBlocks ; rowBlock++){
-                for(int reuse = 0 ; reuse < nrXBlocks ; reuse++){
-                    feedRowBlock(rowBlock,first);
-                    first = false;
+            boolean flushMove = false;
+            boolean flush = false;
+            boolean done = false;
+            int rowBlock = 0;
+            int reuse = 0;
+            int col = 0;
+            int row = 0;
+            while(!done){
+                boolean load = !sync && !flush && !flushMove;
+                VecFloat vec = load ? A[computeIndex(rowBlock, col, row)] : VECTOR_ZERO;
+                boolean new_row_col_pair = flush || !first && col == 0;
+                ChannelAData data = new ChannelAData(vec,new_row_col_pair);
+                write_channel_intel(row_feed_chain[0],data);
+
+                if(sync) {
+                    if (row == SYS_ARRAY_NUM_ROWS * INTERLEAVED - 1) {
+                        sync = false;
+
+                        row = 0;
+                    } else {
+                        row++;
+                    }
+                } else if( flush){
+                    if(row == MATRIX_A_BLOCK_HEIGHT - 1){
+                        flushMove = true;
+                        flush = false;
+                        row = 0;
+                    } else {
+                        row++;
+                    }
+                } else if(flushMove) {
+                    if(row == MATRIX_A_BLOCK_HEIGHT - 1){
+                        done = true;
+                    } else {
+                        row++;
+                    }
+                } else if(row == MATRIX_A_BLOCK_HEIGHT - 1){
+                    row = 0;
+                    if(col == dotProdVecLength - 1){
+                        first = false;
+                        col = 0;
+                        if(reuse == nrXBlocks - 1){
+                            reuse = 0;
+                            if(rowBlock == nrYBlocks - 1){
+                                flush = true;
+                                row = 0;
+                            } else {
+                                rowBlock++;
+                            }
+                        } else {
+                            reuse++;
+                        }
+                    } else {
+                        col++;
+                    }
+                } else {
+                    row++;
                 }
             }
-            flushLastBlock();
+        }
+
+        public void run(){
+
+//            syncWithB();
+            runSingleWrite();
+//            boolean first = true;
+//            for(int rowBlock = 0 ; rowBlock < nrYBlocks ; rowBlock++){
+//                for(int reuse = 0 ; reuse < nrXBlocks ; reuse++){
+//                    feedRowBlock(rowBlock,first);
+//                    first = false;
+//                }
+//            }
+//            flushLastBlock();
         }
 
         void syncWithB(){
@@ -170,9 +235,10 @@ public class MatMulBeauty {
             /* to propagate the results through the system, new elements are needed
                to avoid special casing every where, hence we keep feeding elements
                to fully flush the system */
-            while(true){
-                boolean new_row_col_pair = true;
-                ChannelAData data = new ChannelAData(VECTOR_ZERO,new_row_col_pair);
+            for(int row = 0 ; row < MATRIX_A_BLOCK_HEIGHT ; row++){
+                VecFloat vec =VECTOR_ZERO;
+                boolean new_row_col_pair = false;
+                ChannelAData data = new ChannelAData(vec,new_row_col_pair);
                 write_channel_intel(row_feed_chain[0],data);
             }
 
@@ -221,8 +287,7 @@ public class MatMulBeauty {
 
 
         private void flushLastBlock() {
-                while(true){
-//                for(int col = 0 ; col < MATRIX_B_BLOCK_WIDTH ; col++){
+                for(int col = 0 ; col < 2* MATRIX_B_BLOCK_WIDTH ; col++){
                     write_channel_intel(col_feed_chain[0],VECTOR_ZERO);
                 }
         }
