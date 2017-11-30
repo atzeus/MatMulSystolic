@@ -458,10 +458,10 @@ __kernel void PE_kernel()
 		if (col < (SYS_ARRAY_NUM_COLS-1))
 			 write_channel_intel(ch_data_a[row][col+1], read_A);
 
-		struct  ch_data_b_struct b_data = 
+		struct  ch_data_b_struct read_B = 
 			read_channel_intel(ch_data_b[row][col]);
 		if (row < (SYS_ARRAY_NUM_ROWS-1)) 
-			write_channel_intel(ch_data_b[row+1][col], b_data);
+			write_channel_intel(ch_data_b[row+1][col], read_B);
 
 		float sum;
 		
@@ -470,7 +470,7 @@ __kernel void PE_kernel()
 
 		#pragma unroll
 		for(int d=0; d < DOT_PROD_VECTOR_SIZE; ++d) 
-			sum += read_A.data[d] * b_data[d];
+			sum += read_A.data[d] * read_B.data[d];
 	
 		#pragma unroll
 		for(int i = INTERLEAVED_SQUARED -1 ; i >= 1 ;i--)
