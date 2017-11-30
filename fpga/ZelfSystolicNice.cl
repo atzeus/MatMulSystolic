@@ -40,6 +40,14 @@ struct ch_data_a_struct {
 };
 
 
+#ifndef EMULATOR  // don't use packed in the emulator
+__attribute__((packed))
+#endif
+struct ch_data_b_struct {
+    vec_float_t data;
+};
+
+
 #ifndef EMULATOR
 __attribute__((packed))
 #endif
@@ -212,7 +220,7 @@ Replace for-loops with while loops.
 
 channel struct ch_data_a_struct  ch_data_a        
 	[SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
-channel vec_float_t		 ch_data_b       
+channel struct ch_data_b_struct		 ch_data_b       
 	[SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
 channel float                    ch_data_c        
 	[SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS]  __attribute__((depth(INTERLEAVED_SQUARED)));
@@ -224,9 +232,9 @@ channel struct ch_data_a_struct  row_feed_chain
 channel struct ch_data_a_struct  row_feed_to_buf 
 	[SYS_ARRAY_NUM_ROWS]         __attribute__((depth(0)));
 
-channel vec_float_t  	 col_feed_chain        
+channel struct ch_data_b_struct  	 col_feed_chain        
 	[SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
-channel vec_float_t	     col_feed_to_buf 
+channel struct ch_data_b_struct	     col_feed_to_buf 
 	[SYS_ARRAY_NUM_COLS] __attribute__((depth(INTERLEAVED)));
 
 channel struct custom_float_array  col_c_chain          
@@ -314,7 +322,9 @@ void feedColumnBlock(__global vec_float_t* restrict B, unsigned int colBlock,
         for(int col = 0 ; col < MATRIX_B_BLOCK_WIDTH  ; col++){
             int index = (colBlock * MATRIX_B_BLOCK_WIDTH + col) * 
                              dotProdVecLength + row;
-            write_channel_intel(col_feed_chain[0],B[index]);
+            struct  ch_data_b_struct write;
+            write.data = B[index];
+            write_channel_intel(col_feed_chain[0],write);
         }
     }
 }
@@ -353,7 +363,7 @@ __kernel void feed_mat_B_kernel()
 	const int nrFeedersRight = (SYS_ARRAY_NUM_COLS - 1) - col;
     char i = 0;
  	while(true) {
-        vec_float_t read = read_channel_intel(col_feed_chain[col]);
+        struct  ch_data_b_struct read = read_channel_intel(col_feed_chain[col]);
         if(i == 0){
 		    write_channel_intel(col_feed_to_buf[col], read);
             i = nrFeedersRight;
@@ -397,14 +407,14 @@ __attribute__((num_compute_units(SYS_ARRAY_NUM_COLS)))
 __kernel void buf_mat_b_kernel()
 {
 	const int col = get_compute_id(0);
-	vec_float_t buf[INTERLEAVED];
+	struct  ch_data_b_struct buf[INTERLEAVED];
     #pragma unroll
 	for(int i = 0 ; i < INTERLEAVED ; i++){
-		buf[i] = 0.0f;
+		buf[i].data = 0.0f;
 	}
 	int it = 0;
 	while(true){
-        vec_float_t cur;
+        struct  ch_data_b_struct cur;
         if(it < INTERLEAVED){
             cur = read_channel_intel(col_feed_to_buf[col]);
         } else {
@@ -448,7 +458,7 @@ __kernel void PE_kernel()
 		if (col < (SYS_ARRAY_NUM_COLS-1))
 			 write_channel_intel(ch_data_a[row][col+1], read_A);
 
-		vec_float_t b_data = 
+		struct  ch_data_b_struct b_data = 
 			read_channel_intel(ch_data_b[row][col]);
 		if (row < (SYS_ARRAY_NUM_ROWS-1)) 
 			write_channel_intel(ch_data_b[row+1][col], b_data);
