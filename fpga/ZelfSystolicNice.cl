@@ -25,8 +25,8 @@ typedef float16 vec_float_t;
 #endif
 
 //#define INTERLEAVED 32
-#define MATRIX_A_BLOCK_HEIGHT  (INTERLEAVED * SYS_ARRAY_NUM_ROWS)
-#define MATRIX_B_BLOCK_WIDTH   (INTERLEAVED * SYS_ARRAY_NUM_COLS)
+//#define MATRIX_A_BLOCK_HEIGHT  (INTERLEAVED * SYS_ARRAY_NUM_ROWS)
+//#define MATRIX_B_BLOCK_WIDTH   (INTERLEAVED * SYS_ARRAY_NUM_COLS)
 
 #define INTERLEAVED_SQUARED (INTERLEAVED * INTERLEAVED)
 
@@ -446,9 +446,8 @@ __kernel void PE_kernel()
 	const int col = get_compute_id(1);
     float interleave_shift[INTERLEAVED_SQUARED];
     
-    #pragma unroll
     for (int i=0; i < INTERLEAVED_SQUARED  ; i++) {
-        interleave_shift[i] = 0.0f;
+        interleave_shift[i] = (float)((unsigned int) 0);
     }
 
     int p = 0 ;

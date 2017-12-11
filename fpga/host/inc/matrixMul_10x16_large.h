@@ -5,13 +5,13 @@
 // currently changing the matrix dimensions requires a recompile of both the FPGA code and the HOST code
 
 // Matrix dimensions 
-#define SCALING_FACTOR 2
+#define SCALING_FACTOR 64L
 
-#define HA    (SYS_ARRAY_NUM_COLS * SYS_ARRAY_NUM_ROWS * INTERLEAVED * SCALING_FACTOR)       // Matrix A height
-#define WA    (SYS_ARRAY_NUM_COLS * SYS_ARRAY_NUM_ROWS * INTERLEAVED * SCALING_FACTOR)    // Matrix A width
+#define HA    (MATRIX_A_BLOCK_HEIGHT * SCALING_FACTOR)       // Matrix A height
+#define WA    HA    // Matrix A width
 
 #define HB    WA                                          // Matrix B height
-#define WB    (SYS_ARRAY_NUM_COLS * SYS_ARRAY_NUM_ROWS * INTERLEAVED * SCALING_FACTOR)        // Matrix B width
+#define WB    (MATRIX_B_BLOCK_WIDTH * SCALING_FACTOR)        // Matrix B width
 
 #define HC HA                                             // Matrix C height
 #define WC WB                                             // Matrix C width 

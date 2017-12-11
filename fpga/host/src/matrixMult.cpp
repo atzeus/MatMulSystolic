@@ -58,8 +58,8 @@ void acl_aligned_free (void *ptr) {
 
 
 //#define EMULATOR
-#define COMPUTE_GOLDEN_BLOCKED
-//#define COMPUTE_GOLDEN
+//#define COMPUTE_GOLDEN_BLOCKED
+#define COMPUTE_GOLDEN
 
 
 
@@ -112,9 +112,9 @@ void acl_aligned_free (void *ptr) {
   #include "PE_systolic_array_generic_matrix_blocking_params.h"
 
   #ifdef EMULATOR  
-  #define AOCX_FILE "ZelfSystolicEmu.aocx"
+  #define AOCX_FILE "ZelfSystolic.aocx"
   #else
-  #define AOCX_FILE "ZelfSystolicEmu.aocx"
+  #define AOCX_FILE "ZelfSystolic.aocx"
   #endif
 
   #define NUM_KERNELS 	( SYS_ARRAY_NUM_ROWS*SYS_ARRAY_NUM_COLS + SYS_ARRAY_NUM_ROWS + SYS_ARRAY_NUM_COLS + (SYS_ARRAY_NUM_COLS-1) + (1 + 1 + 1) )
@@ -199,6 +199,7 @@ bool compare_L2_norm(const float* ref_array, const float* output_array, const un
 // using the original B here, not the transposed version
 void compute_gold(float* C, const float* A, const float* B, unsigned int hA, unsigned int wA, unsigned int wB)
 {
+    printf("Compute size %d %d\n", hA,wA);
     for (unsigned int i = 0; i < hA; ++i)
         for (unsigned int j = 0; j < wB; ++j) {
             double sum = 0;
@@ -244,6 +245,22 @@ void compute_gold_blocked(float* C, const float* A, const float* B, unsigned int
 }
 
 
+void pack_reformat_matrix(float * C_orig, float * C_packed, int mat_height, int mat_width, int pack_factor) {
+    int word_id = 0;
+    for(int i=0; i < mat_height; i++) {
+        for(int j=0; j < mat_width; j++) {
+            for(int py = 0; py < pack_factor ; py++){
+                for(int px = 0 ; px < pack_factor ; px++){
+                    C_packed[word_id] = C_orig[(i + py)*mat_width + (j + py)];
+                    word_id++;
+                }
+            }
+        }
+    }
+}
+
+                
+
 void transpose_matrix( float * B_orig, float * B_transposed, int hB, int wB) 
 {
   for(int i=0; i < wB; ++i) {
@@ -263,6 +280,21 @@ void block_wise_reformat_matrix( float * A_orig, float * A_block_wise, int mat_h
           A_block_wise[word_id] = A_orig[(i+k)*mat_width + (j+l)];
           word_id++;
         }
+      }
+    }
+  }
+}
+
+void row_block_reformat_matrix( float * A_orig, float * A_block_wise, int mat_height, int mat_width, int block_height, int vecsize) 
+{
+  int word_id = 0;
+  for(int i=0; i < mat_height; i+=block_height) {
+    for(int j=0; j < mat_width; j+=vecsize) {
+      for(int k=0; k < block_height; k++) {
+      	for(int v = 0; v < vecsize; v++){
+	          A_block_wise[word_id] = A_orig[(i+k)*mat_width + j+v];
+    	      word_id++;
+    	 }
       }
     }
   }
@@ -296,11 +328,12 @@ void print_matrix(float * A, int hA, int wA)
 
 void printDiff(float *data1, float *data2, long int size, float fListTol)
 {
-    printf("Listing Differences > %.6f...\n", fListTol);
+    printf("Listing Differences (nr elems: %d) > %.6f...\n", size,fListTol);
     int i,j,k;
     int error_count=0;
     for (i = 0; i < size; i++) 
     {
+        
       float fDiff = fabs(data1[i] - data2[i]);
       if (fDiff > fListTol) 
         {                
@@ -373,20 +406,18 @@ int main(int argc, const char** argv) {
 		exit(1);
 	}
 	printf("DOT_PROD_VECTOR_SIZE: \t\t%d\n", DOT_PROD_VECTOR_SIZE);
-	if (DOT_PROD_VECTOR_SIZE!=4 && 
-		DOT_PROD_VECTOR_SIZE!=8 && 
-		DOT_PROD_VECTOR_SIZE!=16) {
-		printf("Illegal DOT_PROD_VECTOR_SIZE, supported: 4,8,16\n");
-		exit(1);
-	}
+	//if (DOT_PROD_VECTOR_SIZE!=4 && 
+//		DOT_PROD_VECTOR_SIZE!=8 && 
+//		DOT_PROD_VECTOR_SIZE!=16) {
+//		printf("Illegal DOT_PROD_VECTOR_SIZE, supported: 4,8,16\n");
+//		exit(1);
+//	}
 	printf("\n");
 
-	printf("ACCUM_SHIFT_REG_SIZE: \t\t%d\n", ACCUM_SHIFT_REG_SIZE);
+//	printf("ACCUM_SHIFT_REG_SIZE: \t\t%d\n", ACCUM_SHIFT_REG_SIZE);
 
 	printf("\n");
 
-	printf("ROWS_INTERLEAVED: \t\t%d\n",    ROWS_INTERLEAVED);
-	printf("COLUMNS_INTERLEAVED: \t\t%d\n", COLUMNS_INTERLEAVED);
 	printf("\n");
 
 	printf("MAT_A_BLOCK_HEIGHT: \t\t%d\n",  MAT_A_BLOCK_HEIGHT);
@@ -407,6 +438,16 @@ int main(int argc, const char** argv) {
         }
         printf("MAT_A_NUM_VECTORS_IN_ROW_OF_BLOCKS: \t\t%d\n",   MAT_A_NUM_VECTORS_IN_ROW_OF_BLOCKS);
 	printf("\n");
+
+
+        if(WA % DOT_PROD_VECTOR_SIZE){
+            printf("WA (%d) must be a multiple DOT_PROD_VECTOR_SIZE (%d)\n", WA, DOT_PROD_VECTOR_SIZE);
+            exit(1);
+        }
+        if(WB % DOT_PROD_VECTOR_SIZE){
+            printf("WB (%d) must be a multiple DOT_PROD_VECTOR_SIZE (%d)\n", WB, DOT_PROD_VECTOR_SIZE);
+            exit(1);
+        }
         
 	printf("MAT_B_BLOCK_HEIGHT: \t\t%d\n",  MAT_B_BLOCK_HEIGHT);
 	printf("MAT_B_BLOCK_WIDTH: \t\t%d\n",   MAT_B_BLOCK_WIDTH);
@@ -458,6 +499,7 @@ int main(int argc, const char** argv) {
         float* golden_output_computed_by_blocking;
         float* golden_output_block_wise;
         float* golden_output_block_wise_and_reordered;
+        float* golden_output_packed;
 
 	unsigned int num_elem_A = HA*WA;
 	unsigned int num_elem_B = HB*WB;
@@ -512,6 +554,10 @@ int main(int argc, const char** argv) {
 	if((golden_output_block_wise_and_reordered = (float*)acl_aligned_malloc(num_elem_C*sizeof(float))) == NULL) {
 		perror("Failed malloc of golden_output_block_wise_and_reordered\n");
 	}
+    if((golden_output_packed = (float*)acl_aligned_malloc(num_elem_C*sizeof(float))) == NULL) {
+		perror("Failed malloc of golden_output packed");
+	}
+
 
         printf("Allocated memory for host-side matrices!\n");
         printf("Transposing and re-formatting of matrices!\n");
@@ -532,16 +578,18 @@ int main(int argc, const char** argv) {
         printf(" *** Computing golden reference of the result C matrix (only a section of the C matrix), HC(section)=%d, WC(section)=%d!\n",HA_trim, WB_trim);
         printf(" *** This takes several minutes...\n");
       //    void compute_gold(float* C, const float* A, const float* B, unsigned int hA, unsigned int wA, unsigned int wB)
-        //compute_gold(golden_output, matrix_mul_inputA, matrix_mul_inputB, HA_trim, WA, WB_trim);
+       //compute_gold(golden_output, matrix_mul_inputA, matrix_mul_inputB, HA_trim, WA, WB_trim);
+       num_elem_C_gold = HA_trim * WB_trim;
+        //pack_reformat_matrix(golden_output, golden_output_packed, HA,WB, PACK_FACTOR); 
 #endif
 
 	printf("Block-wise reformatting of matrix A!\n");
-    	block_wise_reformat_matrix(matrix_mul_inputA, matrix_mul_inputA_block_wise, HA, WA, MAT_A_BLOCK_HEIGHT, MAT_A_BLOCK_WIDTH);
+    	row_block_reformat_matrix(matrix_mul_inputA, matrix_mul_inputA_block_wise, HA, WA, MAT_A_BLOCK_HEIGHT,DOT_PROD_VECTOR_SIZE);
         
 	printf("Transposing of matrix B!\n");
     	transpose_matrix(matrix_mul_inputB, matrix_mul_inputB_transposed, HB, WB);
 
-
+       
 
 #ifdef COMPUTE_GOLDEN_BLOCKED
         printf(" *** Computing golden reference of the result C matrix (computing two sections of matrix C)\n");
@@ -581,13 +629,15 @@ int main(int argc, const char** argv) {
 
 
 	printf("Block-wise reformatting of matrix B!\n");
-    	block_wise_reformat_matrix(matrix_mul_inputB_transposed, matrix_mul_inputB_block_wise, WB, HB, MAT_B_BLOCK_WIDTH, MAT_B_BLOCK_HEIGHT);
+    	row_block_reformat_matrix(matrix_mul_inputB_transposed, matrix_mul_inputB_block_wise, WB, HB, MAT_B_BLOCK_WIDTH, DOT_PROD_VECTOR_SIZE);
 
 	printf("Block-wise reformatting of golden output matrix C!\n");
     	block_wise_reformat_matrix(golden_output, golden_output_block_wise, HC, WC, MAT_C_BLOCK_HEIGHT, MAT_C_BLOCK_WIDTH);
+    
+   // print_matrix(golden_output_block_wise, HC, WC);
 
 	printf("Reordering within blocks of block-wise golden output matrix C!\n");
-        reorder_within_blocks(golden_output_block_wise, golden_output_block_wise_and_reordered, HC, WC, SYS_ARRAY_NUM_COLS, MAT_C_BLOCK_WIDTH);
+    //    reorder_within_blocks(golden_output_block_wise, golden_output_block_wise_and_reordered, HC, WC, SYS_ARRAY_NUM_COLS, MAT_C_BLOCK_WIDTH);
 	// printf("Matrix A\n");
 	// // print_matrix(matrix_mul_inputA, HA, WA);
 	// printf("\n");
@@ -764,14 +814,14 @@ int main(int argc, const char** argv) {
 				CL_QUEUE_PROFILING_ENABLE,
 				&status); CHECK(status);
 	}
-
+/*
         fprintf(stdout,"cmdQueue i = %d, a queue for reading the C buffer\n", i);
         cmdQueue[i] = clCreateCommandQueue(
                             context,
                             devices[0],
                             CL_QUEUE_PROFILING_ENABLE,
                             &status); CHECK(status);
-
+*/
 	//----------------------------------------------
 	// Create device buffers
 	//----------------------------------------------
@@ -845,11 +895,13 @@ int main(int argc, const char** argv) {
 		CL_TRUE,
 		0,
 		num_elem_A*sizeof(cl_float),
-		matrix_mul_inputA,
+		matrix_mul_inputA_block_wise,
 		//matrix_mul_inputA,
 		0,
 		NULL,
 		NULL); CHECK(status);
+
+
 
 	status = clEnqueueWriteBuffer(
 		cmdQueue[KID_FEED_MAT_B],
@@ -857,7 +909,7 @@ int main(int argc, const char** argv) {
 		CL_TRUE,
 		0,
 		num_elem_B*sizeof(cl_float),
-		matrix_mul_inputB_transposed,
+		matrix_mul_inputB_block_wise,
 		//matrix_mul_inputB,
 		0,
 		NULL,
@@ -930,10 +982,15 @@ int main(int argc, const char** argv) {
   unsigned int mat_a_num_vectors_in_row_of_blocks = MAT_A_NUM_VECTORS_IN_ROW_OF_BLOCKS;
   unsigned char mat_a_num_blocks_in_col = MAT_A_NUM_BLOCKS_IN_COL;
   unsigned char mat_b_num_blocks_in_row = MAT_B_NUM_BLOCKS_IN_ROW;
-	unsigned int mat_a_num_vectors_in_row = WA / DOT_PROD_VECTOR_SIZE;
-    unsigned int nrXBlocks = MAT_B_NUM_BLOCKS_IN_ROW;
-    unsigned int nrYBlocks = MAT_A_NUM_BLOCKS_IN_COL;
+  unsigned int mat_b_matrix_size = (WB*HB) / DOT_PROD_VECTOR_SIZE;
 
+
+    unsigned int nrXBlocks = WB / MATRIX_B_BLOCK_WIDTH;
+    unsigned int nrYBlocks = HA / MATRIX_A_BLOCK_HEIGHT ;
+  	unsigned int mat_a_num_vectors_in_row = WA / DOT_PROD_VECTOR_SIZE;
+
+	  int num_vec_per_row = INTERLEAVED * nrXBlocks;
+	  unsigned int rowBlockSize = MAT_A_BLOCK_HEIGHT * mat_a_num_vectors_in_row;
         status = clSetKernelArg(
     kernel[KID_FEED_MAT_A],
     0,
@@ -956,7 +1013,7 @@ int main(int argc, const char** argv) {
     kernel[KID_FEED_MAT_A],
     3,
     sizeof(unsigned int),
-    (void*)&mat_a_num_vectors_in_row); CHECK(status);
+    (void*)&rowBlockSize); CHECK(status);
 
   unsigned int mat_b_num_vectors_in_col_of_blocks = MAT_B_NUM_VECTORS_IN_COL_OF_BLOCKS;
   unsigned int mat_b_num_vectors_in_matrix = MAT_B_NUM_VECTORS_IN_MATRIX;
@@ -967,23 +1024,18 @@ int main(int argc, const char** argv) {
     sizeof(cl_mem),
     (void*)&d_matrix_mul_inputB); CHECK(status);
 
-        status = clSetKernelArg(
-    kernel[KID_FEED_MAT_B],
-    1,
-    sizeof(unsigned int),
-    (void*)&nrXBlocks); CHECK(status);
 
         status = clSetKernelArg(
     kernel[KID_FEED_MAT_B],
-    2,
+    1,
     sizeof(unsigned int),
     (void*)&nrYBlocks); CHECK(status);
 
         status = clSetKernelArg(
     kernel[KID_FEED_MAT_B],
-    3,
+    2,
     sizeof(unsigned int),
-    (void*)&mat_a_num_vectors_in_row); CHECK(status);
+    (void*)&mat_b_matrix_size); CHECK(status);
 
   int mat_c_num_coalesced_words = WC * HC / SYS_ARRAY_NUM_COLS;
   int scale = SCALING_FACTOR;
@@ -1000,14 +1052,7 @@ int main(int argc, const char** argv) {
     kernel[KID_DRAIN_MAT_C],
     1,
     sizeof(int),
-    (void*)&nrXBlocks); CHECK(status);
-
-  status = clSetKernelArg(
-    kernel[KID_DRAIN_MAT_C],
-    2,
-    sizeof(int),
-    (void*)&nrYBlocks); CHECK(status);
-
+    (void*)&mat_c_num_coalesced_words); CHECK(status);
 
 	//----------------------------------------------
 	// Configure the work-item structure (using only tasks atm)
@@ -1125,15 +1170,19 @@ int main(int argc, const char** argv) {
     printf("\n\n");
 */
 
+
     printf("\n===== Comparing FPGA results to golden reference ======\n\n");
     float epsilon = 1.0e-5f;
     printf("Tolerance epsilon for L2-norm: 1.0e-5f = %f\n", epsilon);
 
     printf("Comparing FPGA results to golden reference (the first section of matrix C)\n");
 res = true;
+#ifdef COMPUTE_GOLDEN
+    //printDiff(golden_output_block_wise, matrix_mul_outputC, num_elem_C_gold, epsilon);
+#endif
     // res = compare_L2_norm(golden_output_block_wise_and_reordered + C_gold_first_section_offset, matrix_mul_outputC + C_gold_first_section_offset, num_elem_C_gold_first_section, epsilon);
     if (res != true) {
-               printDiff(golden_output_block_wise_and_reordered + C_gold_first_section_offset, matrix_mul_outputC + C_gold_first_section_offset, num_elem_C_gold_first_section, epsilon);
+               printDiff(golden_output_packed + C_gold_first_section_offset, matrix_mul_outputC + C_gold_first_section_offset, num_elem_C_gold_first_section, epsilon);
     } else { // res == shrTRUE
       printf("Comparing FPGA results to golden reference (the last section of matrix C)\n");
       //res = compare_L2_norm(golden_output_block_wise_and_reordered + C_gold_last_section_offset, matrix_mul_outputC + C_gold_last_section_offset, num_elem_C_gold_last_section, epsilon);
