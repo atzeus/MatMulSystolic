@@ -36,6 +36,7 @@ __attribute__((packed))
 #endif
 struct ch_data_a_struct {
     vec_float_t data;
+    bool first;
     bool last;
 };
 
@@ -328,6 +329,7 @@ __kernel void load_mat_A_and_forward(
 			// the "last" boolean indicates if an old result 
 			// should be flushed
 			// this is the case if on the last column
+            write.first = j - (rowBlockSize-1) < MATRIX_A_BLOCK_HEIGHT;
 			write.last = j < MATRIX_A_BLOCK_HEIGHT;
 		    write_channel_intel(row_feed_chain_border,write);	
 		   	i++;
@@ -435,10 +437,7 @@ __kernel void buf_mat_b_kernel()
 {
 	const int col = get_compute_id(0);
 	vec_float_t buf[INTERLEAVED];
-    #pragma unroll
-	for(int i = 0 ; i < INTERLEAVED ; i++){
-		buf[i] = 0.0f;
-	}
+
 	int it = 0;
 	while(true){
         struct  ch_data_b_struct  cur;
@@ -472,11 +471,6 @@ __kernel void PE_kernel()
 	const int row = get_compute_id(0);
 	const int col = get_compute_id(1);
     float interleave_shift[INTERLEAVED_SQUARED];
-    
-    #pragma unroll
-    for (int i=0; i < INTERLEAVED_SQUARED  ; i++) {
-        interleave_shift[i] = 0.0f;
-    }
 
 	while(true){
 		struct  ch_data_a_struct read_A;
@@ -498,13 +492,14 @@ __kernel void PE_kernel()
 		#pragma unroll
 		for(int d=0; d < DOT_PROD_VECTOR_SIZE; ++d) 
 			sum += read_A.data[d] *  read_B.data[d];
-			
-	   float accum = sum +  interleave_shift[INTERLEAVED_SQUARED-1];
+	    
+
+        if (!read_A.first)
+	     sum += interleave_shift[INTERLEAVED_SQUARED-1];
 		
 
 	   if(read_A.last) {
-			write_channel_intel(ch_data_c[row][col],accum);
-			accum = 0;
+			write_channel_intel(ch_data_c[row][col],sum);
 		} 
 		
 		
@@ -512,7 +507,7 @@ __kernel void PE_kernel()
 		for(int i = INTERLEAVED_SQUARED-1 ; i >= 1 ; i--)
 			interleave_shift[i] = interleave_shift[i-1];
 			
-       interleave_shift[0] = accum;    
+       interleave_shift[0] = sum;    
   }
 }
 
