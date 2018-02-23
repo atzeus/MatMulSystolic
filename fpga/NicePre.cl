@@ -4,47 +4,27 @@
 
 #pragma OPENCL EXTENSION cl_intel_channels : enable
 
-#define VECTOR_FLOAT1_ZERO   0.0f
-#define VECTOR_FLOAT4_ZERO   (float4)(0.0f, 0.0f, 0.0f, 0.0f)
-#define VECTOR_FLOAT8_ZERO   (float8)(VECTOR_FLOAT4_ZERO,VECTOR_FLOAT4_ZERO)
-#define VECTOR_FLOAT16_ZERO (float16)(VECTOR_FLOAT8_ZERO,VECTOR_FLOAT8_ZERO)
-#if DOT_PROD_VECTOR_SIZE==1
-typedef float vec_float_t;
-#define VECTOR_ZERO VECTOR_FLOAT1_ZERO
-#elif DOT_PROD_VECTOR_SIZE==4
-typedef float4 vec_float_t;
-#define VECTOR_ZERO VECTOR_FLOAT4_ZERO
-#elif DOT_PROD_VECTOR_SIZE==8
-typedef float8 vec_float_t;
-#define VECTOR_ZERO VECTOR_FLOAT8_ZERO
-#elif DOT_PROD_VECTOR_SIZE==16
-typedef float16 vec_float_t;
-#define VECTOR_ZERO VECTOR_FLOAT16_ZERO
-#else
-#error Unsupported DOT_PROD_VECTOR_SIZE
-#endif
+#define FIXED_PRECISION
+#include "host/inc/definetypes.h"
 
-//#define INTERLEAVED 32
-#define MATRIX_A_BLOCK_HEIGHT  (INTERLEAVED * SYS_ARRAY_NUM_ROWS)
-#define MATRIX_B_BLOCK_WIDTH   (INTERLEAVED * SYS_ARRAY_NUM_COLS)
 
-#define INTERLEAVED_SQUARED (INTERLEAVED * INTERLEAVED)
+
 
 
 #ifndef EMULATOR  // don't use packed in the emulator
 __attribute__((packed))
 #endif
 struct ch_data_a_struct {
-    vec_float_t data;
+    vec_sample_t data;
     bool first;
     bool last;
 };
 
 
-/* Packing this vec_float_t in a struct seems useless,
+/* Packing this vec_sample_t in a struct seems useless,
    but this actually reduces the floor space usage 
    significantly. I do not know the exact reason for
-   this. Possibly sending 'bare' vec_float_ts over
+   this. Possibly sending 'bare' vec_sample_ts over
    a channel adds extra padding bits.
 */
 
@@ -53,7 +33,7 @@ struct ch_data_a_struct {
 __attribute__((packed))
 #endif
 struct ch_data_b_struct {
-    vec_float_t data;
+    vec_sample_t data;
 };
 
 
@@ -61,7 +41,7 @@ struct ch_data_b_struct {
 __attribute__((packed))
 #endif
 struct custom_float_array { 
-	float vals[SYS_ARRAY_NUM_COLS];
+	output vals[SYS_ARRAY_NUM_COLS];
 };
 
 
@@ -227,22 +207,21 @@ Drain C:
 */
 
 
-channel struct ch_data_a_struct  ch_data_a        
-	[SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS-1] __attribute__((depth(0)));
+channel struct ch_data_a_struct ch_data_a [SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS-1];
 channel struct ch_data_a_struct  ch_data_a_border
-	[SYS_ARRAY_NUM_ROWS] __attribute__((depth(0)));
+	[SYS_ARRAY_NUM_ROWS] ;
 
 channel struct ch_data_b_struct		 ch_data_b       
 	[SYS_ARRAY_NUM_ROWS-1][SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
 channel struct ch_data_b_struct		 ch_data_b_border       
     [SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
 
-channel float                    ch_data_c        
+channel output                    ch_data_c        
 	[SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS]  __attribute__((depth(INTERLEAVED_SQUARED)));
 
-channel float                    ch_drain_c       
+channel output                    ch_drain_c       
 	[SYS_ARRAY_NUM_ROWS-1][SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
-channel float                    ch_drain_c_border       
+channel output                    ch_drain_c_border       
     [SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
 
 channel struct ch_data_a_struct  row_feed_chain        
@@ -316,7 +295,7 @@ void row_block_reformat_matrix( float * A_orig, float * A_block_wise, int mat_he
 
 __attribute__((max_global_work_dim(0)))
 __kernel void load_mat_A_and_forward( 
-	__global vec_float_t* restrict A, unsigned int nrXBlocks, unsigned int nrYBlocks,  unsigned int rowBlockSize)
+	__global vec_sample_t* restrict A, unsigned int nrXBlocks, unsigned int nrYBlocks,  unsigned int rowBlockSize)
 {  
   int startRowBlock = 0;
   for(int rowBlock = 0 ; rowBlock < nrYBlocks ; rowBlock++){
@@ -345,7 +324,7 @@ __kernel void load_mat_A_and_forward(
 
 
 __attribute__((max_global_work_dim(0)))
-__kernel void load_mat_B_and_forward( __global vec_float_t* restrict B, 
+__kernel void load_mat_B_and_forward( __global vec_sample_t* restrict B, 
 	unsigned int nrYBlocks, 
 	unsigned int matrixSize)
 {
@@ -436,7 +415,7 @@ __attribute__((num_compute_units(SYS_ARRAY_NUM_COLS)))
 __kernel void buf_mat_b_kernel()
 {
 	const int col = get_compute_id(0);
-	vec_float_t buf[INTERLEAVED];
+	vec_sample_t buf[INTERLEAVED];
 
 	int it = 0;
 	while(true){
@@ -470,7 +449,7 @@ __kernel void PE_kernel()
 {
 	const int row = get_compute_id(0);
 	const int col = get_compute_id(1);
-    float interleave_shift[INTERLEAVED_SQUARED];
+    output interleave_shift[INTERLEAVED_SQUARED];
 
 	while(true){
 		struct  ch_data_a_struct read_A;
@@ -487,11 +466,11 @@ __kernel void PE_kernel()
 		if (row < (SYS_ARRAY_NUM_ROWS-1)) 
 			write_channel_intel(ch_data_b[row][col], read_B);
 		
-		float sum =0;
+		output sum =0;
 
 		#pragma unroll
 		for(int d=0; d < DOT_PROD_VECTOR_SIZE; ++d) 
-			sum += read_A.data[d] *  read_B.data[d];
+			sum += (output)read_A.data[d] *  (output)read_B.data[d];
 	    
 
         if (!read_A.first)
@@ -525,7 +504,7 @@ __kernel void drain_C()
     int j = 0;
  
 	while (true) {
-        float read ;
+        output read ;
         if( row > 0 && i < INTERLEAVED * row ) 
               read = read_channel_intel(ch_drain_c[row - 1][col]);
         else  read = read_channel_intel(ch_data_c[row][col]);
@@ -554,7 +533,7 @@ __kernel void drain_C_chain_node_kernel() {
 	unsigned col = get_compute_id(0);
 
 	while(true){
-		float in = read_channel_intel(ch_drain_c_border[col]);
+		output in = read_channel_intel(ch_drain_c_border[col]);
 		struct custom_float_array prev_node_data_in;
 		if(col != SYS_ARRAY_NUM_COLS - 1)
 		    prev_node_data_in = read_channel_intel(col_c_chain[col ]);
