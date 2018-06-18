@@ -4,7 +4,7 @@
 
 #pragma OPENCL EXTENSION cl_intel_channels : enable
 
-#define FIXED_PRECISION
+// #define FIXED_PRECISION
 #include "host/inc/definetypes.h"
 
 
@@ -21,13 +21,21 @@ struct ch_data_a_struct {
 };
 
 
+#ifndef EMULATOR  // don't use packed in the emulator
+__attribute__((packed))
+#endif
+struct ch_data_b_struct_trans {
+    vec_sample_t data;
+    bool flush;
+};
+
+
 /* Packing this vec_sample_t in a struct seems useless,
    but this actually reduces the floor space usage 
    significantly. I do not know the exact reason for
    this. Possibly sending 'bare' vec_sample_ts over
    a channel adds extra padding bits.
 */
-
 
 #ifndef EMULATOR  // don't use packed in the emulator
 __attribute__((packed))
@@ -207,9 +215,9 @@ Drain C:
 */
 
 
-channel struct ch_data_a_struct ch_data_a [SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS-1];
+channel struct ch_data_a_struct ch_data_a [SYS_ARRAY_NUM_ROWS][SYS_ARRAY_NUM_COLS-1] __attribute__((depth(0)));
 channel struct ch_data_a_struct  ch_data_a_border
-	[SYS_ARRAY_NUM_ROWS] ;
+	[SYS_ARRAY_NUM_ROWS] __attribute__((depth(0)));
 
 channel struct ch_data_b_struct		 ch_data_b       
 	[SYS_ARRAY_NUM_ROWS-1][SYS_ARRAY_NUM_COLS] __attribute__((depth(0)));
@@ -235,6 +243,8 @@ channel struct ch_data_b_struct  	 col_feed_chain
 	[SYS_ARRAY_NUM_COLS-1] __attribute__((depth(0)));
 channel struct ch_data_b_struct  	 col_feed_chain_border        
 	 __attribute__((depth(64)));
+channel struct ch_data_b_struct_trans  	 col_feed_transpose        
+	 __attribute__((depth(0)));
 channel struct ch_data_b_struct	     col_feed_to_buf 
 	[SYS_ARRAY_NUM_COLS] __attribute__((depth(INTERLEAVED)));
 
@@ -292,7 +302,7 @@ void row_block_reformat_matrix( float * A_orig, float * A_block_wise, int mat_he
 }
 */
 
-
+/*
 __attribute__((max_global_work_dim(0)))
 __kernel void load_mat_A_and_forward( 
 	__global vec_sample_t* restrict A, unsigned int nrXBlocks, unsigned int nrYBlocks,  unsigned int rowBlockSize)
@@ -302,42 +312,172 @@ __kernel void load_mat_A_and_forward(
 	int i;
   	for(int reuse = 0 ; reuse < nrXBlocks ; reuse++){
   		i = startRowBlock;
-  		for(int j = rowBlockSize-1; j >= 0; j--){
+  		for(int j = 0; j < rowBlockSize; j++){
 	       	struct  ch_data_a_struct write;
   			write.data = A[i];
+            for(int z = 0 ; z < DOT_PROD_VECTOR_SIZE ; z++)
+
 			// the "last" boolean indicates if an old result 
 			// should be flushed
 			// this is the case if on the last column
-            write.first = j - (rowBlockSize-1) < MATRIX_A_BLOCK_HEIGHT;
-			write.last = j < MATRIX_A_BLOCK_HEIGHT;
+            write.first = j < MATRIX_A_BLOCK_HEIGHT;
+			write.last = rowBlockSize - 1 - j < MATRIX_A_BLOCK_HEIGHT;
 		    write_channel_intel(row_feed_chain_border,write);	
 		   	i++;
+
 		}
     }
     startRowBlock = i;
 
   }
 }
+*/
 
-// The input for the B loader is first transposed and then pre-ordered by 
-// the above row_block_reformat_matrix function on the CPU side
+
+__attribute__((max_global_work_dim(0)))
+__kernel void load_mat_A_and_forward( 
+	__global vec_sample_t* restrict A, unsigned int nrXBlocks, unsigned int nrYBlocks,  unsigned int nrVectorsK)
+{  
+  for(int rowBlock = 0 ; rowBlock < nrYBlocks ; rowBlock++){
+  	for(int reuse = 0 ; reuse < nrXBlocks ; reuse++){
+        for(int c = 0 ; c < nrVectorsK ; c++) {
+            for(int r = 0 ; r < BLOCK_HEIGHT ; r++){
+                int index = (rowBlock * BLOCK_HEIGHT  + r)* nrVectorsK + c ;
+                struct  ch_data_a_struct write;
+      			write.data = A[index];
+                write.first = c == 0;   
+                write.last = c == nrVectorsK - 1;
+    		    write_channel_intel(row_feed_chain_border,write);	
+
+            }
+        }
+    }
+  }
+}
+
+
+        
+      
+   
+
 
 
 __attribute__((max_global_work_dim(0)))
 __kernel void load_mat_B_and_forward( __global vec_sample_t* restrict B, 
-	unsigned int nrYBlocks, 
-	unsigned int matrixSize)
+	unsigned int nrXBlocks, unsigned int nrYBlocks,  unsigned int matBWidthInVectors, unsigned int matBHeight, unsigned int matBSizeInVectors)
 {
-	for(int reuse = 0 ; reuse < nrYBlocks; reuse++){
-		for(int i = 0 ; i < matrixSize ; i++){
-		    struct  ch_data_b_struct write ;
-			write.data = B[i];                             		
-            write_channel_intel(col_feed_chain_border,write);
-
-		}
-	}
+  // the extra arguments can be computed as follows:
+  // #define BLOCK_WIDTH_IN_VECTORS (BLOCK_WIDTH / DOT_PROD_VECTOR_SIZE)
+  //  matBWidthInVectors = (nrXBlock * BLOCK_WIDTH_IN_VECTORS) (defined in MAT_B_WIDTH_IN_VECTORS)
+  //  matBHeight = NR_VECTORS_K * DOT_PROD_VECTOR_SIZE (MAT_B_HEIGHT)
+  //  matBSizeInVectors = matBWidthInVectors * matBHeight (MAT_B_SIZE_IN_VECTORS)
+  // 
+  // these are instead precomputed on the host side because
+  // computing them here would cost valuable resources
+  for(int reuse = 0 ; reuse < nrYBlocks ; reuse++){
+    for(int colBlock = 0 ; colBlock < nrXBlocks ; colBlock++){
+        // to make sure we do coalesed reads, we read a block of 
+        // DOT_PROD_VECTOR_SIZE by DOT_PROD_VECTOR_SIZE elements
+        // which is transposed by the next autorun kernel
+        for(int r = 0 ; r < matBHeight ; r+=DOT_PROD_VECTOR_SIZE) {
+            for(int c = 0 ; c < BLOCK_WIDTH_IN_VECTORS ; c++){
+                for(int i = 0 ; i < DOT_PROD_VECTOR_SIZE ; i++){
+                    int index = (r + i) * matBWidthInVectors + (colBlock * BLOCK_WIDTH_IN_VECTORS) + c ;
+                    struct  ch_data_b_struct_trans write;
+      			    write.data = B[index];
+                    write.flush = reuse == nrYBlocks -1 && index == matBSizeInVectors - 1;
+        		    write_channel_intel(col_feed_transpose,write);	
+                }
+            }
+        }
+    }
+  }
 
 }
+
+
+__attribute__((max_global_work_dim(0)))
+__attribute__((autorun))
+__kernel void transpose()
+{
+
+
+/*
+    ALUT 1087 FF 1422  RAM 104 (4%)
+    vec_sample_t memx[2][N];
+    int i = 0;
+    int buf = 0;
+    bool start = false;
+    bool flush = false;
+    while(true) {
+		struct  ch_data_b_struct_trans read ;
+        if(!flush) read = read_channel_intel(col_feed_transpose);
+
+        #pragma unroll
+        for(int z = 0 ; z < N ; z++){
+            memx[buf][z][i] = read.data[z];
+        }
+        flush = read.flush;
+  
+        if(i == N - 1) {
+            i = 0;
+            start = true;
+            buf = 1 - buf;
+        } else {
+            i++;
+        }
+
+        struct  ch_data_b_struct write ;
+        write.data = memx[1-buf][i];
+        if(start) write_channel_intel(col_feed_chain_border,write);
+
+    }
+*/
+
+/*
+    ALUT 2999 FF 4269
+*/
+    vec_sample_t in[DOT_PROD_VECTOR_SIZE];
+    vec_sample_t out[DOT_PROD_VECTOR_SIZE];
+    int i = 0;
+    bool start = false;
+    bool flush = false;
+    while(true) {
+		struct  ch_data_b_struct_trans read ;
+        if(!flush) read = read_channel_intel(col_feed_transpose);
+      #pragma unroll
+        for(int i = 0  ; i < N-1 ; i++){
+            in[i] = in[i+1];
+        }
+
+        in[N-1] = read.data;
+        flush = read.flush;
+  
+        if(i == N - 1) {
+            #pragma unroll
+            for(int x = 0 ; x < N ; x++){
+                #pragma unroll
+                for(int y = 0 ; y < N ; y++){
+                    out[y][x] = in[x][y];
+                }
+            }
+            i = 0;
+            start = true;
+        } else {
+            i++;
+        }
+
+        struct  ch_data_b_struct write ;
+        write.data = out[0];
+        if(start) write_channel_intel(col_feed_chain_border,write);
+        #pragma unroll
+        for(int i = 0  ; i < N -1; i++){
+            out[i] = out[i+1];
+        }
+    }
+
+}
+
 
 // The feeders obtain data from the loader and distribute the data
 // round robin fashion over the buffers
@@ -466,16 +606,18 @@ __kernel void PE_kernel()
 		if (row < (SYS_ARRAY_NUM_ROWS-1)) 
 			write_channel_intel(ch_data_b[row][col], read_B);
 		
-		output sum =0;
-
+		output sum;
+        if (read_A.first) {
+            sum = 0;
+        } else {
+            sum = interleave_shift[INTERLEAVED_SQUARED-1];
+        }
 		#pragma unroll
 		for(int d=0; d < DOT_PROD_VECTOR_SIZE; ++d) 
-			sum += (output)read_A.data[d] *  (output)read_B.data[d];
+			sum += read_A.data[d] *  read_B.data[d];
 	    
 
-        if (!read_A.first)
-	     sum += interleave_shift[INTERLEAVED_SQUARED-1];
-		
+
 
 	   if(read_A.last) {
 			write_channel_intel(ch_data_c[row][col],sum);
@@ -551,17 +693,19 @@ __kernel void drain_C_chain_node_kernel() {
 }
 
 
-/* To reduce logic usage, the output is written to memory in the order it 
-   arrives. This means the data is written block-by-block (row major on blocks).
-   With each block, the data is also layed out in row major order.
-*/
-
 __attribute__((max_global_work_dim(0)))
-__kernel void drain_C_write_tree_root_to_mem_kernel(__global struct custom_float_array* restrict C, int size) {
-	for(int i = 0 ; i < size ;i++){
-	    struct custom_float_array dataIn = read_channel_intel(col_c_chain_border);
-        C[i] = dataIn;       
+__kernel void drain_C_write_tree_root_to_mem_kernel(__global struct custom_float_array* restrict C, unsigned int nrXBlocks, unsigned int nrYBlocks, int rowsize) {
+    // int rowsize = nrXBlocks * (MAT_B_BLOCK_WIDTH / SYS_ARRAY_NUM_COLS ); (MAT_C_WIDTH_IN_COLLUMN_GROUPS)
+	for(int yBlock = 0 ; yBlock < nrYBlocks ; yBlock++){
+        for(int xBlock = 0 ; xBlock < nrXBlocks ; xBlock++){
+            for(int y = 0 ; y < BLOCK_HEIGHT ; y++){
+                for(int x = 0 ; x < BLOCK_WIDTH_IN_COLLUMN_GROUPS ; x++){
+                    int index = (yBlock * BLOCK_HEIGHT + y) *  rowsize +  (xBlock * BLOCK_WIDTH_IN_COLLUMN_GROUPS) + x;
+	                struct custom_float_array dataIn = read_channel_intel(col_c_chain_border);
+                    C[index] = dataIn;       
+                }
+            }
+        }
 	}
 }
-
 

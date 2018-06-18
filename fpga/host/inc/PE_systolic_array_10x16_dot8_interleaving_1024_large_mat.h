@@ -2,18 +2,19 @@
 #define _PE_SYSTOLIC_ARRAY_H_
 
 // design space exploration of three vector sizes: float4, float8 and float16
-#define DOT_PROD_VECTOR_SIZE      16L
+#define DOT_PROD_VECTOR_SIZE      8L
 
-#define SYS_ARRAY_NUM_ROWS        10L
-#define SYS_ARRAY_NUM_COLS        16L
+#define SYS_ARRAY_NUM_ROWS        12
+#define SYS_ARRAY_NUM_COLS        12
 
 
 
-#define INTERLEAVED 4L
+#define INTERLEAVED 8L
 
 #define INTERLEAVED_SQUARED (INTERLEAVED * INTERLEAVED)
 
-
+// for transpose to work MAT_B_BLOCK_WIDTH / DOT_PROD_VECTOR_SIZE should be a 
+// whole number
 
 #define MAT_A_BLOCK_WIDTH         8L
 #define MATRIX_A_BLOCK_HEIGHT  (INTERLEAVED * SYS_ARRAY_NUM_ROWS)
